@@ -1,8 +1,11 @@
+using System.IO;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using NativeBar.WinUI.Core.Models;
+using NativeBar.WinUI.Core.Services;
 
 namespace NativeBar.WinUI.Core.Providers.Gemini;
 
@@ -144,11 +147,225 @@ public static class GeminiUsageFetcher
     private const string TokenRefreshUrl = "https://oauth2.googleapis.com/token";
     private const int TimeoutSeconds = 30;
 
-    // Google OAuth2 client credentials
-    // Set via environment variables: GEMINI_CLIENT_ID and GEMINI_CLIENT_SECRET
-    // Or use the values from Gemini CLI if you have access to them
-    private static readonly string GoogleClientId = Environment.GetEnvironmentVariable("GEMINI_CLIENT_ID") ?? "";
-    private static readonly string GoogleClientSecret = Environment.GetEnvironmentVariable("GEMINI_CLIENT_SECRET") ?? "";
+    // Google OAuth2 client credentials - extracted from Gemini CLI installation
+    private static string? _cachedClientId;
+    private static string? _cachedClientSecret;
+    private static readonly object _credentialsLock = new();
+
+    /// <summary>
+    /// Get Google OAuth client credentials from Gemini CLI installation
+    /// </summary>
+    private static (string? clientId, string? clientSecret) GetGoogleClientCredentials()
+    {
+        lock (_credentialsLock)
+        {
+            if (_cachedClientId != null && _cachedClientSecret != null)
+            {
+                return (_cachedClientId, _cachedClientSecret);
+            }
+
+            // Try to extract from Gemini CLI installation
+            var creds = ExtractOAuthClientCredentialsFromCLI();
+            if (creds.HasValue)
+            {
+                _cachedClientId = creds.Value.clientId;
+                _cachedClientSecret = creds.Value.clientSecret;
+                Log($"Extracted OAuth credentials from Gemini CLI");
+                return creds.Value;
+            }
+
+            // Fallback to environment variables
+            var envId = Environment.GetEnvironmentVariable("GEMINI_CLIENT_ID");
+            var envSecret = Environment.GetEnvironmentVariable("GEMINI_CLIENT_SECRET");
+            if (!string.IsNullOrEmpty(envId) && !string.IsNullOrEmpty(envSecret))
+            {
+                _cachedClientId = envId;
+                _cachedClientSecret = envSecret;
+                Log("Using OAuth credentials from environment variables");
+                return (envId, envSecret);
+            }
+
+            Log("No OAuth client credentials found");
+            return (null, null);
+        }
+    }
+
+    /// <summary>
+    /// Extract OAuth client credentials from Gemini CLI oauth2.js file
+    /// </summary>
+    private static (string clientId, string clientSecret)? ExtractOAuthClientCredentialsFromCLI()
+    {
+        try
+        {
+            // Find Gemini CLI installation path
+            var geminiPath = FindGeminiCliPath();
+            if (string.IsNullOrEmpty(geminiPath))
+            {
+                Log("Gemini CLI not found in PATH");
+                return null;
+            }
+
+            Log($"Found Gemini CLI at: {geminiPath}");
+
+            // Get the real path (resolve symlinks if any)
+            var realPath = geminiPath;
+            try
+            {
+                var fileInfo = new FileInfo(geminiPath);
+                if (fileInfo.LinkTarget != null)
+                {
+                    realPath = fileInfo.LinkTarget;
+                    if (!Path.IsPathRooted(realPath))
+                    {
+                        realPath = Path.Combine(Path.GetDirectoryName(geminiPath) ?? "", realPath);
+                    }
+                }
+            }
+            catch { }
+
+            // Navigate to find oauth2.js file
+            var binDir = Path.GetDirectoryName(realPath) ?? "";
+            var baseDir = Path.GetDirectoryName(binDir) ?? "";
+
+            // Possible paths where oauth2.js might be located
+            var possiblePaths = new[]
+            {
+                // npm global installation
+                Path.Combine(baseDir, "node_modules", "@google", "gemini-cli-core", "dist", "src", "code_assist", "oauth2.js"),
+                Path.Combine(baseDir, "lib", "node_modules", "@google", "gemini-cli-core", "dist", "src", "code_assist", "oauth2.js"),
+                // npm nested inside gemini-cli
+                Path.Combine(baseDir, "node_modules", "@google", "gemini-cli", "node_modules", "@google", "gemini-cli-core", "dist", "src", "code_assist", "oauth2.js"),
+                // Homebrew/bun structure
+                Path.Combine(baseDir, "libexec", "lib", "node_modules", "@google", "gemini-cli", "node_modules", "@google", "gemini-cli-core", "dist", "src", "code_assist", "oauth2.js"),
+                // Windows AppData npm global
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm", "node_modules", "@google", "gemini-cli-core", "dist", "src", "code_assist", "oauth2.js"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm", "node_modules", "@google", "gemini-cli", "node_modules", "@google", "gemini-cli-core", "dist", "src", "code_assist", "oauth2.js"),
+            };
+
+            foreach (var path in possiblePaths)
+            {
+                if (File.Exists(path))
+                {
+                    var content = File.ReadAllText(path);
+                    var creds = ParseOAuthCredentialsFromJs(content);
+                    if (creds.HasValue)
+                    {
+                        Log($"Found OAuth credentials in: {path}");
+                        return creds;
+                    }
+                }
+            }
+
+            Log("oauth2.js not found in any expected location");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Log($"Error extracting OAuth credentials: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Find Gemini CLI path from PATH environment variable
+    /// </summary>
+    private static string? FindGeminiCliPath()
+    {
+        var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
+        var paths = pathEnv.Split(Path.PathSeparator);
+
+        var geminiNames = new[] { "gemini.cmd", "gemini.exe", "gemini.ps1", "gemini" };
+
+        foreach (var dir in paths)
+        {
+            foreach (var name in geminiNames)
+            {
+                var fullPath = Path.Combine(dir, name);
+                if (File.Exists(fullPath))
+                {
+                    return fullPath;
+                }
+            }
+        }
+
+        // Also check common Windows npm global paths
+        var npmGlobalPaths = new[]
+        {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "nodejs"),
+        };
+
+        foreach (var dir in npmGlobalPaths)
+        {
+            foreach (var name in geminiNames)
+            {
+                var fullPath = Path.Combine(dir, name);
+                if (File.Exists(fullPath))
+                {
+                    return fullPath;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Parse OAuth client ID and secret from oauth2.js content
+    /// </summary>
+    private static (string clientId, string clientSecret)? ParseOAuthCredentialsFromJs(string content)
+    {
+        try
+        {
+            // Match: const OAUTH_CLIENT_ID = '...';
+            // or: OAUTH_CLIENT_ID: '...'
+            var clientIdPatterns = new[]
+            {
+                @"OAUTH_CLIENT_ID\s*[=:]\s*['""]([^'""]+)['""]",
+                @"clientId\s*[=:]\s*['""]([^'""]+)['""]",
+            };
+
+            var secretPatterns = new[]
+            {
+                @"OAUTH_CLIENT_SECRET\s*[=:]\s*['""]([^'""]+)['""]",
+                @"clientSecret\s*[=:]\s*['""]([^'""]+)['""]",
+            };
+
+            string? clientId = null;
+            string? clientSecret = null;
+
+            foreach (var pattern in clientIdPatterns)
+            {
+                var match = Regex.Match(content, pattern);
+                if (match.Success)
+                {
+                    clientId = match.Groups[1].Value;
+                    break;
+                }
+            }
+
+            foreach (var pattern in secretPatterns)
+            {
+                var match = Regex.Match(content, pattern);
+                if (match.Success)
+                {
+                    clientSecret = match.Groups[1].Value;
+                    break;
+                }
+            }
+
+            if (!string.IsNullOrEmpty(clientId) && !string.IsNullOrEmpty(clientSecret))
+            {
+                return (clientId, clientSecret);
+            }
+
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     // Model tier classification
     private static readonly HashSet<string> ProModels = new(StringComparer.OrdinalIgnoreCase)
@@ -340,14 +557,23 @@ public static class GeminiUsageFetcher
             return null;
         }
 
+        // Get OAuth client credentials from Gemini CLI
+        var (clientId, clientSecret) = GetGoogleClientCredentials();
+        if (string.IsNullOrEmpty(clientId) || string.IsNullOrEmpty(clientSecret))
+        {
+            Log("Cannot refresh token: OAuth client credentials not available. " +
+                "Ensure Gemini CLI is installed or set GEMINI_CLIENT_ID and GEMINI_CLIENT_SECRET environment variables.");
+            return null;
+        }
+
         try
         {
             using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(TimeoutSeconds) };
 
             var formData = new FormUrlEncodedContent(new[]
             {
-                new KeyValuePair<string, string>("client_id", GoogleClientId),
-                new KeyValuePair<string, string>("client_secret", GoogleClientSecret),
+                new KeyValuePair<string, string>("client_id", clientId),
+                new KeyValuePair<string, string>("client_secret", clientSecret),
                 new KeyValuePair<string, string>("refresh_token", credentials.RefreshToken),
                 new KeyValuePair<string, string>("grant_type", "refresh_token")
             });
@@ -551,12 +777,7 @@ public static class GeminiUsageFetcher
 
     private static void Log(string message)
     {
-        try
-        {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] GeminiUsageFetcher: {message}\n");
-        }
-        catch { }
+        DebugLogger.Log("GeminiUsageFetcher", message);
     }
 }
 
