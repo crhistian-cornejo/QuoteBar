@@ -30,6 +30,10 @@ public sealed class TrayPopupWindow : Window
     private bool _isPinned;
     private bool _isDarkMode;
 
+    // Appearance settings (read from SettingsService)
+    private bool IsCompactMode => SettingsService.Instance.Settings.CompactMode;
+    private bool ShowProviderIcons => SettingsService.Instance.Settings.ShowProviderIcons;
+
     // Provider tabs
     private Grid _tabsGrid = null!;
     private readonly Dictionary<string, Border> _tabButtons = new();
@@ -38,9 +42,10 @@ public sealed class TrayPopupWindow : Window
     // UI Elements
     private Grid _rootGrid = null!;
     private Border _popupBorder = null!;
-    private Image _logoImage = null!;
+    private Border _logoContainer = null!;  // Container for logo (can hold Image or Path)
     private TextBlock _providerNameText = null!;
     private TextBlock _planTypeText = null!;
+    private TextBlock _costText = null!;  // Cost display (e.g., "$5.20 this month")
     private FontIcon _pinIcon = null!;
 
     // Usage sections
@@ -98,7 +103,7 @@ public sealed class TrayPopupWindow : Window
 
     public TrayPopupWindow(IServiceProvider serviceProvider)
     {
-        Title = "NativeBar";
+        Title = "QuoteBar";
 
         _usageStore = serviceProvider.GetRequiredService<UsageStore>();
         _viewModel = new TrayPopupViewModel(_usageStore);
@@ -108,6 +113,9 @@ public sealed class TrayPopupWindow : Window
 
         // Listen for theme changes
         ThemeService.Instance.ThemeChanged += OnThemeChanged;
+
+        // Listen for settings changes (provider enable/disable)
+        SettingsService.Instance.SettingsChanged += OnSettingsChanged;
 
         // Set Desktop Acrylic backdrop for more transparency
         try
@@ -141,8 +149,19 @@ public sealed class TrayPopupWindow : Window
 
         Activated += OnWindowActivated;
 
-        System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-            $"[{DateTime.Now}] TrayPopupWindow created (CodexBar style, DarkMode={_isDarkMode})\n");
+        DebugLogger.Log("TrayPopup", $"TrayPopupWindow created (CodexBar style, DarkMode={_isDarkMode})");
+    }
+
+    private void OnSettingsChanged()
+    {
+        // Rebuild UI on settings change (provider toggles, etc.)
+        DispatcherQueue?.TryEnqueue(() =>
+        {
+            DebugLogger.Log("TrayPopup", "Settings changed - rebuilding UI");
+            BuildUI();
+            Content = _rootGrid;
+            UpdateUI();
+        });
     }
 
     private void OnThemeChanged(ElementTheme theme)
@@ -223,11 +242,13 @@ public sealed class TrayPopupWindow : Window
             Margin = new Thickness(0)
         });
 
-        // === Scrollable content area ===
+        // === Scrollable content area === (Apply CompactMode padding)
+        var contentPadding = IsCompactMode ? 10.0 : 16.0;
+        var contentSpacing = IsCompactMode ? 8.0 : 12.0;
         var contentPanel = new StackPanel
         {
-            Padding = new Thickness(16, 12, 16, 16),
-            Spacing = 12
+            Padding = new Thickness(contentPadding, contentPadding - 4, contentPadding, contentPadding),
+            Spacing = contentSpacing
         };
 
         // Header with provider info
@@ -344,11 +365,15 @@ public sealed class TrayPopupWindow : Window
             ? Windows.UI.Color.FromArgb(60, 255, 255, 255)
             : Windows.UI.Color.FromArgb(50, 0, 0, 0);
 
+        // Apply CompactMode padding
+        var tabPadding = IsCompactMode ? new Thickness(8, 6, 8, 6) : new Thickness(12, 8, 12, 8);
+        var tabMargin = IsCompactMode ? new Thickness(0, 0, 6, 0) : new Thickness(0, 0, 8, 0);
+
         var tab = new Border
         {
             CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(12, 8, 12, 8),
-            Margin = new Thickness(0, 0, 8, 0),
+            Padding = tabPadding,
+            Margin = tabMargin,
             Background = new SolidColorBrush(isSelected ? selectedBgColor : Colors.Transparent),
             Tag = provider.Id
         };
@@ -356,17 +381,22 @@ public sealed class TrayPopupWindow : Window
         var content = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 6
+            Spacing = ShowProviderIcons ? 6 : 4
         };
 
-        // Provider icon - try SVG first, then fallback to FontIcon
-        FrameworkElement iconElement = CreateProviderIcon(provider, isSelected);
+        // Provider icon - only add if ShowProviderIcons is enabled
+        if (ShowProviderIcons)
+        {
+            FrameworkElement iconElement = CreateProviderIcon(provider, isSelected);
+            content.Children.Add(iconElement);
+        }
 
-        // Provider name
+        // Provider name (adjust font size for compact mode)
+        var nameFontSize = IsCompactMode ? 11.0 : 12.0;
         var name = new TextBlock
         {
             Text = provider.DisplayName,
-            FontSize = 12,
+            FontSize = nameFontSize,
             FontWeight = isSelected ? Microsoft.UI.Text.FontWeights.SemiBold : Microsoft.UI.Text.FontWeights.Normal,
             Foreground = new SolidColorBrush(isSelected ? PrimaryTextColor : SecondaryTextColor),
             VerticalAlignment = VerticalAlignment.Center
@@ -383,7 +413,6 @@ public sealed class TrayPopupWindow : Window
             VerticalAlignment = VerticalAlignment.Center
         };
 
-        content.Children.Add(iconElement);
         content.Children.Add(name);
         content.Children.Add(statusDot);
         tab.Child = content;
@@ -475,32 +504,167 @@ public sealed class TrayPopupWindow : Window
         return Windows.UI.Color.FromArgb(255, 76, 175, 80); // Green - connected
     }
 
+    // Cache for parsed SVG path data
+    private static readonly Dictionary<string, string> _svgPathCache = new();
+    private static readonly object _svgCacheLock = new();
+
     private FrameworkElement CreateProviderIcon(IProviderDescriptor provider, bool isSelected)
     {
-        // Map provider ID to SVG file name - use white version for dark icons in dark mode
-        var svgFileName = GetProviderSvgFileName(provider.Id);
-
-        if (!string.IsNullOrEmpty(svgFileName))
+        // Strategy: Parse SVG file once, cache path data, render with dynamic color
+        var pathData = GetOrParseSvgPath(provider.Id);
+        if (!string.IsNullOrEmpty(pathData))
         {
-            var svgPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icons", svgFileName);
-            if (System.IO.File.Exists(svgPath))
+            try
             {
-                return new Image
+                var iconColor = GetProviderIconColor(provider.Id);
+                var geometry = (Microsoft.UI.Xaml.Media.Geometry)Microsoft.UI.Xaml.Markup.XamlBindingHelper.ConvertValue(
+                    typeof(Microsoft.UI.Xaml.Media.Geometry), pathData);
+                
+                return new Microsoft.UI.Xaml.Shapes.Path
                 {
+                    Data = geometry,
+                    Fill = new SolidColorBrush(iconColor),
                     Width = 14,
                     Height = 14,
-                    Source = new SvgImageSource(new Uri(svgPath)),
+                    Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
                     VerticalAlignment = VerticalAlignment.Center
                 };
             }
+            catch (Exception ex)
+            {
+                DebugLogger.LogError("TrayPopup", $"Failed to parse path for {provider.Id}", ex);
+            }
         }
 
-        // Fallback to FontIcon
+        // Final fallback to FontIcon (always works)
         return new FontIcon
         {
             Glyph = provider.IconGlyph,
             FontSize = 14,
-            Foreground = new SolidColorBrush(isSelected ? Colors.White : SecondaryTextColor)
+            Foreground = new SolidColorBrush(GetProviderIconColor(provider.Id))
+        };
+    }
+
+    /// <summary>
+    /// Get or parse SVG path data from file. Caches result for performance.
+    /// </summary>
+    private string? GetOrParseSvgPath(string providerId)
+    {
+        var cacheKey = providerId.ToLower();
+        
+        lock (_svgCacheLock)
+        {
+            if (_svgPathCache.TryGetValue(cacheKey, out var cached))
+            {
+                return cached;
+            }
+        }
+
+        // Get base SVG file (always use non-white version, we control color via Fill)
+        var svgFileName = GetBaseSvgFileName(providerId);
+        if (string.IsNullOrEmpty(svgFileName))
+            return null;
+
+        var svgPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icons", svgFileName);
+        if (!System.IO.File.Exists(svgPath))
+            return null;
+
+        try
+        {
+            var svgContent = System.IO.File.ReadAllText(svgPath);
+            var pathData = ExtractPathFromSvg(svgContent);
+            
+            if (!string.IsNullOrEmpty(pathData))
+            {
+                lock (_svgCacheLock)
+                {
+                    _svgPathCache[cacheKey] = pathData;
+                }
+                return pathData;
+            }
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("TrayPopup", $"Failed to read SVG {svgFileName}", ex);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Extract path data from SVG content using regex
+    /// Combines multiple paths into a single path string
+    /// </summary>
+    private string? ExtractPathFromSvg(string svgContent)
+    {
+        // Match all <path ... d="..." /> elements - extract the d attribute
+        var matches = System.Text.RegularExpressions.Regex.Matches(
+            svgContent,
+            @"<path[^>]*\sd=""([^""]+)""",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+
+        if (matches.Count == 0)
+            return null;
+
+        if (matches.Count == 1)
+            return matches[0].Groups[1].Value;
+
+        // Combine multiple paths into single path string
+        var combinedPath = new System.Text.StringBuilder();
+        foreach (System.Text.RegularExpressions.Match match in matches)
+        {
+            if (match.Success && match.Groups.Count > 1)
+            {
+                if (combinedPath.Length > 0)
+                    combinedPath.Append(' ');
+                combinedPath.Append(match.Groups[1].Value);
+            }
+        }
+
+        return combinedPath.Length > 0 ? combinedPath.ToString() : null;
+    }
+
+    /// <summary>
+    /// Get base SVG file name (non-themed version - we control color programmatically)
+    /// </summary>
+    private string? GetBaseSvgFileName(string providerId)
+    {
+        return providerId.ToLower() switch
+        {
+            "claude" => "claude.svg",
+            "codex" => "openai.svg",
+            "gemini" => "gemini.svg",
+            "copilot" => "github-copilot.svg",
+            "cursor" => "cursor.svg",
+            "droid" => "droid.svg",
+            "antigravity" => "antigravity.svg",
+            "zai" => "zai.svg",
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// Get the appropriate icon color based on theme.
+    /// Brand colors stay consistent, dark icons switch to white in dark mode.
+    /// </summary>
+    private Windows.UI.Color GetProviderIconColor(string providerId)
+    {
+        return providerId.ToLower() switch
+        {
+            // Brand colors - always use brand color (visible in both modes)
+            "claude" => Windows.UI.Color.FromArgb(255, 217, 119, 87),       // #D97757 Orange
+            "gemini" => Windows.UI.Color.FromArgb(255, 66, 133, 244),       // #4285F4 Blue
+            "antigravity" => Windows.UI.Color.FromArgb(255, 255, 107, 107), // #FF6B6B Red
+            "droid" => Windows.UI.Color.FromArgb(255, 238, 96, 24),         // #EE6018 Orange
+            
+            // Dark icons - switch to white in dark mode
+            "cursor" => _isDarkMode ? Colors.White : Windows.UI.Color.FromArgb(255, 0, 0, 0),
+            "codex" => _isDarkMode ? Colors.White : Windows.UI.Color.FromArgb(255, 0, 0, 0),
+            "copilot" => _isDarkMode ? Colors.White : Windows.UI.Color.FromArgb(255, 36, 41, 47),
+            "zai" => _isDarkMode ? Colors.White : Windows.UI.Color.FromArgb(255, 0, 0, 0),
+            
+            // Default - use theme-appropriate color
+            _ => _isDarkMode ? Colors.White : Windows.UI.Color.FromArgb(255, 60, 60, 60)
         };
     }
 
@@ -552,10 +716,10 @@ public sealed class TrayPopupWindow : Window
         headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        // Logo
-        _logoImage = new Image { Width = 36, Height = 36 };
+        // Logo container
+        _logoContainer = new Border { Width = 36, Height = 36 };
         LoadProviderLogo();
-        Grid.SetColumn(_logoImage, 0);
+        Grid.SetColumn(_logoContainer, 0);
 
         // Provider info
         var headerTextStack = new StackPanel
@@ -583,14 +747,52 @@ public sealed class TrayPopupWindow : Window
         headerTextStack.Children.Add(_planTypeText);
         Grid.SetColumn(headerTextStack, 1);
 
-        // Pin button
-        var pinButton = CreateIconButton("\uE718", out _pinIcon);
-        pinButton.PointerPressed += (s, e) => OnPinClick();
-        Grid.SetColumn(pinButton, 2);
+        // Right side: Cost display + subtle pin icon
+        var rightStack = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Right
+        };
 
-        headerGrid.Children.Add(_logoImage);
+        _costText = new TextBlock
+        {
+            Text = "",
+            FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 76, 175, 80)), // Green
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        // Subtle pin icon (functional, more visible when pinned or on hover)
+        _pinIcon = new FontIcon
+        {
+            Glyph = "\uE718",
+            FontSize = 12,
+            Foreground = new SolidColorBrush(TertiaryTextColor),
+            Opacity = 0.4,
+            Margin = new Thickness(8, 0, 0, 0)
+        };
+
+        var pinContainer = new Border
+        {
+            Child = _pinIcon,
+            Padding = new Thickness(4),
+            CornerRadius = new CornerRadius(4),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        pinContainer.PointerPressed += (s, e) => OnPinClick();
+        pinContainer.PointerEntered += (s, e) => _pinIcon.Opacity = 1.0;
+        pinContainer.PointerExited += (s, e) => _pinIcon.Opacity = _isPinned ? 1.0 : 0.4;
+
+        rightStack.Children.Add(_costText);
+        rightStack.Children.Add(pinContainer);
+        Grid.SetColumn(rightStack, 2);
+
+        headerGrid.Children.Add(_logoContainer);
         headerGrid.Children.Add(headerTextStack);
-        headerGrid.Children.Add(pinButton);
+        headerGrid.Children.Add(rightStack);
         parent.Children.Add(headerGrid);
     }
 
@@ -598,45 +800,46 @@ public sealed class TrayPopupWindow : Window
     {
         try
         {
-            // Get SVG file name for the selected provider
-            var svgFileName = GetProviderSvgFileName(_selectedProviderId);
-
-            if (!string.IsNullOrEmpty(svgFileName))
+            // Use same SVG parsing system as tab icons for consistency
+            var pathData = GetOrParseSvgPath(_selectedProviderId);
+            if (!string.IsNullOrEmpty(pathData))
             {
-                var svgPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icons", svgFileName);
-                if (System.IO.File.Exists(svgPath))
+                try
                 {
-                    _logoImage.Source = new SvgImageSource(new Uri(svgPath));
+                    var iconColor = GetProviderIconColor(_selectedProviderId);
+                    var geometry = (Microsoft.UI.Xaml.Media.Geometry)Microsoft.UI.Xaml.Markup.XamlBindingHelper.ConvertValue(
+                        typeof(Microsoft.UI.Xaml.Media.Geometry), pathData);
+                    
+                    var pathIcon = new Microsoft.UI.Xaml.Shapes.Path
+                    {
+                        Data = geometry,
+                        Fill = new SolidColorBrush(iconColor),
+                        Width = 32,
+                        Height = 32,
+                        Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        HorizontalAlignment = HorizontalAlignment.Center
+                    };
+                    _logoContainer.Child = pathIcon;
                     return;
                 }
+                catch { }
             }
 
-            // Fallback to app logo if no provider SVG
+            // Final fallback to app logo
             var logoPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "LOGO-NATIVE.png");
             if (System.IO.File.Exists(logoPath))
             {
-                _logoImage.Source = new BitmapImage(new Uri(logoPath));
+                var logoImage = new Image
+                {
+                    Width = 36,
+                    Height = 36,
+                    Source = new BitmapImage(new Uri(logoPath))
+                };
+                _logoContainer.Child = logoImage;
             }
         }
         catch { }
-    }
-
-    private string? GetProviderSvgFileName(string providerId)
-    {
-        // Use white versions for dark icons in dark mode
-        // Icons with dark fills need white versions in dark mode
-        return providerId.ToLower() switch
-        {
-            "claude" => "claude.svg",  // Orange icon - visible in both modes
-            "codex" => _isDarkMode ? "openai-white.svg" : "openai.svg",
-            "gemini" => "gemini.svg",  // Blue icon - visible in both modes
-            "copilot" => _isDarkMode ? "github-copilot-white.svg" : "github-copilot.svg",
-            "cursor" => _isDarkMode ? "cursor-white.svg" : "cursor.svg",
-            "droid" => _isDarkMode ? "droid-white.svg" : "droid.svg",
-            "antigravity" => "antigravity.svg",  // Red icon - visible in both modes
-            "zai" => _isDarkMode ? "zai-white.svg" : "zai.svg",  // Black/white based on theme
-            _ => null
-        };
     }
 
     private void BuildFooter(StackPanel parent)
@@ -672,7 +875,7 @@ public sealed class TrayPopupWindow : Window
         // Settings row
         var settingsRow = new StackPanel { Spacing = 4, Margin = new Thickness(0, 8, 0, 0) };
         AddFooterLink("\uE713", "Settings...", settingsRow, OnSettingsClick);
-        AddFooterLink("\uE946", "About NativeBar", settingsRow, OnAboutClick);
+        AddFooterLink("\uE946", "About QuoteBar", settingsRow, OnAboutClick);
         AddFooterLink("\uE7E8", "Quit", settingsRow, OnQuitClick);
         parent.Children.Add(settingsRow);
     }
@@ -855,8 +1058,10 @@ public sealed class TrayPopupWindow : Window
     public void PositionNear(int iconX, int iconY, int iconWidth, int iconHeight, bool taskbarAtBottom = true)
     {
         const int popupWidth = 340;
-        const int popupHeight = 580;
         const int margin = 12;
+
+        // Calculate dynamic height based on number of provider rows
+        int popupHeight = CalculatePopupHeight();
 
         int x, y;
 
@@ -878,6 +1083,34 @@ public sealed class TrayPopupWindow : Window
         y = Math.Max(workArea.Y + 8, Math.Min(y, workArea.Y + workArea.Height - popupHeight - 8));
 
         _appWindow.MoveAndResize(new RectInt32(x, y, popupWidth, popupHeight));
+    }
+
+    /// <summary>
+    /// Calculate popup height based on number of enabled providers and CompactMode setting
+    /// Compact mode uses reduced base height and smaller row heights
+    /// </summary>
+    private int CalculatePopupHeight()
+    {
+        // Apply CompactMode sizing
+        int baseHeight = IsCompactMode ? 420 : 540;   // Reduced base height for compact mode
+        int rowHeight = IsCompactMode ? 28 : 36;       // Height per additional row
+        const int baseRows = 2;                        // Default rows for baseHeight
+
+        // Get enabled provider count
+        var allProviders = ProviderRegistry.Instance.GetAllProviders().ToList();
+        var enabledCount = allProviders.Count(p => SettingsService.Instance.Settings.IsProviderEnabled(p.Id));
+        
+        // If none enabled, use all
+        if (enabledCount == 0)
+            enabledCount = allProviders.Count;
+
+        // Calculate rows needed
+        int rowCount = (int)Math.Ceiling((double)enabledCount / MaxTabsPerRow);
+
+        // Add extra height for rows beyond base
+        int extraRows = Math.Max(0, rowCount - baseRows);
+        
+        return baseHeight + (extraRows * rowHeight);
     }
 
     public void ShowPopup()
@@ -918,6 +1151,18 @@ public sealed class TrayPopupWindow : Window
             _providerNameText.Text = provider.DisplayName;
             // Update provider logo
             LoadProviderLogo();
+        }
+
+        // Update cost display
+        if (snapshot?.Cost != null && snapshot.Cost.TotalCostUSD > 0)
+        {
+            _costText.Text = $"${snapshot.Cost.TotalCostUSD:F2}";
+            _costText.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            _costText.Text = "";
+            _costText.Visibility = Visibility.Collapsed;
         }
 
         // Update identity info
@@ -1007,15 +1252,18 @@ public sealed class TrayPopupWindow : Window
 
     private void AddUsageSection(string label, double percent, RateWindow? window, string valueText, string? resetText = null, bool showPace = false)
     {
-        var section = new StackPanel { Spacing = 6 };
+        // Apply CompactMode spacing
+        var sectionSpacing = IsCompactMode ? 4.0 : 6.0;
+        var section = new StackPanel { Spacing = sectionSpacing };
 
-        // Label row
+        // Label row - apply CompactMode font sizes
+        var labelFontSize = IsCompactMode ? 12.0 : 13.0;
         var labelRow = new Grid();
 
         var labelText = new TextBlock
         {
             Text = label,
-            FontSize = 13,
+            FontSize = labelFontSize,
             FontWeight = Microsoft.UI.Text.FontWeights.Medium,
             Foreground = new SolidColorBrush(PrimaryTextColor)
         };
@@ -1023,7 +1271,7 @@ public sealed class TrayPopupWindow : Window
         var valueTextBlock = new TextBlock
         {
             Text = valueText,
-            FontSize = 13,
+            FontSize = labelFontSize,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             HorizontalAlignment = HorizontalAlignment.Right,
             Foreground = new SolidColorBrush(PrimaryTextColor)
@@ -1033,21 +1281,25 @@ public sealed class TrayPopupWindow : Window
         labelRow.Children.Add(valueTextBlock);
         section.Children.Add(labelRow);
 
-        // Progress bar
+        // Progress bar - apply CompactMode sizing
+        var progressHeight = IsCompactMode ? 5.0 : 6.0;
+        var progressWidth = IsCompactMode ? 280.0 : 308.0;
+        var progressRadius = progressHeight / 2;
+
         var progressTrack = new Border
         {
-            Height = 6,
-            CornerRadius = new CornerRadius(3),
+            Height = progressHeight,
+            CornerRadius = new CornerRadius(progressRadius),
             Background = new SolidColorBrush(ProgressTrackColor)
         };
 
         var progressFill = new Border
         {
-            Height = 6,
-            CornerRadius = new CornerRadius(3),
+            Height = progressHeight,
+            CornerRadius = new CornerRadius(progressRadius),
             Background = new SolidColorBrush(GetProgressColor(percent)),
             HorizontalAlignment = HorizontalAlignment.Left,
-            Width = Math.Max(0, Math.Min(308 * percent / 100.0, 308))
+            Width = Math.Max(0, Math.Min(progressWidth * percent / 100.0, progressWidth))
         };
 
         var progressContainer = new Grid();
@@ -1055,9 +1307,10 @@ public sealed class TrayPopupWindow : Window
         progressTrack.Child = progressContainer;
         section.Children.Add(progressTrack);
 
-        // Reset time and pace
-        if (!string.IsNullOrEmpty(resetText) || showPace)
+        // Reset time and pace - hide in CompactMode to reduce info
+        if (!IsCompactMode && (!string.IsNullOrEmpty(resetText) || showPace))
         {
+            var infoFontSize = 10.0;
             var infoRow = new Grid();
 
             if (showPace && window != null)
@@ -1067,7 +1320,7 @@ public sealed class TrayPopupWindow : Window
                 var paceText = new TextBlock
                 {
                     Text = $"Pace: {(pacePercent >= 0 ? "Ahead" : "Behind")} ({pacePercent:+0;-0}%) · Lasts to reset",
-                    FontSize = 11,
+                    FontSize = infoFontSize,
                     Foreground = new SolidColorBrush(TertiaryTextColor)
                 };
                 infoRow.Children.Add(paceText);
@@ -1078,7 +1331,7 @@ public sealed class TrayPopupWindow : Window
                 var resetTextBlock = new TextBlock
                 {
                     Text = resetText,
-                    FontSize = 11,
+                    FontSize = infoFontSize,
                     HorizontalAlignment = HorizontalAlignment.Right,
                     Foreground = new SolidColorBrush(TertiaryTextColor)
                 };

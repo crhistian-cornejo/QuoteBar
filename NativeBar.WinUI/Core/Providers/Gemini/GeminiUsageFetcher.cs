@@ -793,7 +793,7 @@ public static class GeminiUsageFetcher
 
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
         client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        client.DefaultRequestHeaders.Add("User-Agent", "NativeBar");
+        client.DefaultRequestHeaders.Add("User-Agent", "QuoteBar");
 
         return client;
     }

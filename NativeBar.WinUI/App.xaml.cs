@@ -22,17 +22,29 @@ public partial class App : Application
     private TrayPopupWindow? _popupWindow;
     private PopupStateManager? _popupState;
     private TaskbarOverlayHelper? _taskbarOverlay;
+    private UsageStore? _usageStore;
+
+    /// <summary>
+    /// Gets the service provider for dependency injection
+    /// </summary>
+    public IServiceProvider? Services => _serviceProvider;
+
+    /// <summary>
+    /// Gets the current App instance
+    /// </summary>
+    public new static App? Current => Application.Current as App;
 
     public App()
     {
         try
         {
-            System.IO.File.WriteAllText("D:\\NativeBar\\debug.log", $"[{DateTime.Now}] App starting\n");
+            // Initialize debug logger first
+            DebugLogger.Initialize(enabled: true);
+            DebugLogger.Log("App", "Starting");
 
             UnhandledException += (s, e) =>
             {
-                System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                    $"[{DateTime.Now}] CRASH: {e.Exception.Message}\n{e.Exception.StackTrace}\n");
+                DebugLogger.LogError("App", "CRASH", e.Exception);
                 e.Handled = true;
             };
 
@@ -42,11 +54,11 @@ public partial class App : Application
             // Initialize notification service
             NotificationService.Instance.Initialize();
 
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log", $"[{DateTime.Now}] App created successfully\n");
+            DebugLogger.Log("App", "Created successfully");
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log", $"[{DateTime.Now}] INIT ERROR: {ex.Message}\n");
+            DebugLogger.LogError("App", "INIT ERROR", ex);
             throw;
         }
     }
@@ -67,7 +79,7 @@ public partial class App : Application
             _dispatcherQueue = DispatcherQueue.GetForCurrentThread();
 
             // Create hidden window
-            _hiddenWindow = new Window { Title = "NativeBar" };
+            _hiddenWindow = new Window { Title = "QuoteBar" };
             _hiddenWindow.Content = new Grid();
 
             var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(_hiddenWindow);
@@ -84,33 +96,43 @@ public partial class App : Application
                 () => _dispatcherQueue?.TryEnqueue(OnExitClick),
                 () => _dispatcherQueue?.TryEnqueue(OnHoverEnter),
                 () => _dispatcherQueue?.TryEnqueue(OnHoverLeave));
-            _notifyIcon.Create("NativeBar - AI Usage Monitor");
+            _notifyIcon.Create("QuoteBar - AI Usage Monitor");
 
             // Initialize taskbar overlay helper (uses hidden window handle)
             _taskbarOverlay = new TaskbarOverlayHelper(hwnd);
+
+            // Subscribe to usage updates for tray badge
+            _usageStore = _serviceProvider?.GetRequiredService<UsageStore>();
+            if (_usageStore != null)
+            {
+                _usageStore.AllProvidersRefreshed += OnUsageDataRefreshed;
+            }
+
+            // Subscribe to settings changes (for tray badge toggle)
+            SettingsService.Instance.SettingsChanged += OnSettingsChanged;
 
             // Activate and hide
             _hiddenWindow.Activate();
             ShowWindow(hwnd, 0);
 
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log", $"[{DateTime.Now}] Ready! Icon in system tray.\n");
+            DebugLogger.Log("App", "Ready! Icon in system tray.");
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log", $"[{DateTime.Now}] LAUNCH ERROR: {ex.Message}\n{ex.StackTrace}\n");
+            DebugLogger.LogError("App", "LAUNCH ERROR", ex);
         }
     }
-    
+
     private void OnLeftClick()
     {
         try
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log", $"[{DateTime.Now}] Left click - toggling popup\n");
+            DebugLogger.Log("App", "Left click - toggling popup");
             _popupState?.OnTrayIconClick();
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log", $"[{DateTime.Now}] LEFT CLICK ERROR: {ex.Message}\n{ex.StackTrace}\n");
+            DebugLogger.LogError("App", "LEFT CLICK ERROR", ex);
         }
     }
 
@@ -122,13 +144,13 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log", $"[{DateTime.Now}] RIGHT CLICK ERROR: {ex.Message}\n");
+            DebugLogger.LogError("App", "RIGHT CLICK ERROR", ex);
         }
     }
 
     private void OnExitClick()
     {
-        System.IO.File.AppendAllText("D:\\NativeBar\\debug.log", $"[{DateTime.Now}] Exiting...\n");
+        DebugLogger.Log("App", "Exiting...");
         _taskbarOverlay?.Dispose();
         _notifyIcon?.Dispose();
         Application.Current.Exit();
@@ -144,11 +166,53 @@ public partial class App : Application
         _popupState?.OnMouseLeaveTrayIcon();
     }
 
+    private void OnUsageDataRefreshed()
+    {
+        _dispatcherQueue?.TryEnqueue(UpdateTrayBadge);
+    }
+
+    private void OnSettingsChanged()
+    {
+        _dispatcherQueue?.TryEnqueue(UpdateTrayBadge);
+    }
+
+    private void UpdateTrayBadge()
+    {
+        try
+        {
+            var settings = SettingsService.Instance.Settings;
+            
+            if (!settings.TrayBadgeEnabled)
+            {
+                // Reset to default icon if badges disabled
+                _notifyIcon?.ResetToDefaultIcon();
+                return;
+            }
+
+            if (_usageStore == null || _notifyIcon == null) return;
+
+            // Get all snapshots and generate badge
+            var snapshots = _usageStore.GetAllSnapshots();
+            var isDarkMode = ThemeService.Instance.IsDarkMode;
+            
+            using var badge = TrayBadgeGenerator.GenerateBadgeFromSnapshots(
+                snapshots,
+                settings.TrayBadgeProviders,
+                isDarkMode);
+
+            _notifyIcon.UpdateIcon(badge);
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("App", "UPDATE TRAY BADGE ERROR", ex);
+        }
+    }
+
     private void OnShowPopup()
     {
         try
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log", $"[{DateTime.Now}] OnShowPopup called\n");
+            DebugLogger.Log("App", "OnShowPopup called");
 
             if (_popupWindow == null)
             {
@@ -173,7 +237,7 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log", $"[{DateTime.Now}] SHOW POPUP ERROR: {ex.Message}\n{ex.StackTrace}\n");
+            DebugLogger.LogError("App", "SHOW POPUP ERROR", ex);
         }
     }
 
@@ -181,12 +245,12 @@ public partial class App : Application
     {
         try
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log", $"[{DateTime.Now}] OnHidePopup called\n");
+            DebugLogger.LogDebug("App", "OnHidePopup called");
             _popupWindow?.HidePopup();
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log", $"[{DateTime.Now}] HIDE POPUP ERROR: {ex.Message}\n");
+            DebugLogger.LogError("App", "HIDE POPUP ERROR", ex);
         }
     }
 
@@ -199,7 +263,7 @@ public partial class App : Application
                 _mainWindow = new MainWindow(_serviceProvider!);
                 _mainWindow.Closed += (s, e) =>
                 {
-                    System.IO.File.AppendAllText("D:\\NativeBar\\debug.log", $"[{DateTime.Now}] Main window closed\n");
+                    DebugLogger.Log("App", "Main window closed");
                     _mainWindow = null;
                 };
             }
@@ -210,7 +274,7 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log", $"[{DateTime.Now}] SHOW MAIN WINDOW ERROR: {ex.Message}\n{ex.StackTrace}\n");
+            DebugLogger.LogError("App", "SHOW MAIN WINDOW ERROR", ex);
         }
     }
 
@@ -220,7 +284,7 @@ public partial class App : Application
     {
         try
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log", $"[{DateTime.Now}] Opening Settings window (page={page ?? "default"})\n");
+            DebugLogger.Log("App", $"Opening Settings window (page={page ?? "default"})");
 
             // Hide popup first
             OnHidePopup();
@@ -230,7 +294,7 @@ public partial class App : Application
                 _settingsWindow = new SettingsWindow(page);
                 _settingsWindow.Closed += (s, e) =>
                 {
-                    System.IO.File.AppendAllText("D:\\NativeBar\\debug.log", $"[{DateTime.Now}] Settings window closed\n");
+                    DebugLogger.Log("App", "Settings window closed");
                     _settingsWindow = null;
                 };
             }
@@ -245,7 +309,7 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log", $"[{DateTime.Now}] SHOW SETTINGS ERROR: {ex.Message}\n{ex.StackTrace}\n");
+            DebugLogger.LogError("App", "SHOW SETTINGS ERROR", ex);
         }
     }
 
@@ -253,8 +317,7 @@ public partial class App : Application
     {
         try
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] PinStateChanged: isPinned={isPinned}, provider={providerId}, usage={usagePercentage}%, color={colorHex}\n");
+            DebugLogger.Log("App", $"PinStateChanged: isPinned={isPinned}, provider={providerId}, usage={usagePercentage}%, color={colorHex}");
 
             if (isPinned)
             {
@@ -271,8 +334,7 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] OnPinStateChanged ERROR: {ex.Message}\n");
+            DebugLogger.LogError("App", "OnPinStateChanged ERROR", ex);
         }
     }
 
@@ -305,6 +367,8 @@ public class NotifyIconHelper : IDisposable
     private const int WM_LBUTTONUP = 0x0202;
     private const int WM_RBUTTONUP = 0x0205;
     private const int WM_MOUSEMOVE = 0x0200;
+    private const int WM_CONTEXTMENU = 0x007B;
+    private const int NIN_SELECT = WM_USER + 0;      // Primary click (left button)
     private const int NIN_POPUPOPEN = 0x0406;
     private const int NIN_POPUPCLOSE = 0x0407;
     private const int NIF_MESSAGE = 0x01;
@@ -332,6 +396,8 @@ public class NotifyIconHelper : IDisposable
     private WndProcDelegate? _wndProc;
     private IntPtr _oldWndProc;
     private bool _isHovering;
+    
+    private const int NIM_MODIFY = 0x01;
 
     private delegate IntPtr WndProcDelegate(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
 
@@ -387,7 +453,7 @@ public class NotifyIconHelper : IDisposable
 
         // Create context menu
         _menuHandle = CreatePopupMenu();
-        AppendMenu(_menuHandle, MF_STRING, IDM_EXIT, "Exit NativeBar");
+        AppendMenu(_menuHandle, MF_STRING, IDM_EXIT, "Exit QuoteBar");
     }
 
     public bool Create(string tooltip)
@@ -397,23 +463,23 @@ public class NotifyIconHelper : IDisposable
 
         if (_iconHandle == IntPtr.Zero)
         {
-            // Fallback: create programmatic icon
-            using var bitmap = new System.Drawing.Bitmap(32, 32);
+            // Fallback: create programmatic icon (16x16 standard tray size)
+            using var bitmap = new System.Drawing.Bitmap(16, 16);
             using (var g = System.Drawing.Graphics.FromImage(bitmap))
             {
                 g.Clear(System.Drawing.Color.Transparent);
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
 
                 using var brush = new System.Drawing.SolidBrush(System.Drawing.Color.FromArgb(124, 58, 237));
-                g.FillEllipse(brush, 2, 2, 28, 28);
+                g.FillEllipse(brush, 1, 1, 14, 14);
 
-                using var font = new System.Drawing.Font("Segoe UI", 14, System.Drawing.FontStyle.Bold);
+                using var font = new System.Drawing.Font("Segoe UI", 8, System.Drawing.FontStyle.Bold);
                 using var sf = new System.Drawing.StringFormat
                 {
                     Alignment = System.Drawing.StringAlignment.Center,
                     LineAlignment = System.Drawing.StringAlignment.Center
                 };
-                g.DrawString("N", font, System.Drawing.Brushes.White, new System.Drawing.RectangleF(0, 0, 32, 32), sf);
+                g.DrawString("N", font, System.Drawing.Brushes.White, new System.Drawing.RectangleF(0, 0, 16, 16), sf);
             }
 
             _iconHandle = bitmap.GetHicon();
@@ -462,6 +528,84 @@ public class NotifyIconHelper : IDisposable
         return (pt.X - 16, pt.Y - 32, 32, 32);
     }
 
+    /// <summary>
+    /// Update the tray icon with a new bitmap (for dynamic usage badges)
+    /// </summary>
+    public void UpdateIcon(System.Drawing.Bitmap bitmap)
+    {
+        if (!_created) return;
+
+        try
+        {
+            // Create new icon handle
+            var newIconHandle = bitmap.GetHicon();
+
+            var nid = new NOTIFYICONDATA
+            {
+                cbSize = Marshal.SizeOf<NOTIFYICONDATA>(),
+                hWnd = _hwnd,
+                uID = 1,
+                uFlags = NIF_ICON,
+                hIcon = newIconHandle
+            };
+
+            if (Shell_NotifyIcon(NIM_MODIFY, ref nid))
+            {
+                // Destroy old icon handle
+                if (_iconHandle != IntPtr.Zero)
+                    DestroyIcon(_iconHandle);
+                _iconHandle = newIconHandle;
+            }
+            else
+            {
+                // Failed to update, destroy the new handle
+                DestroyIcon(newIconHandle);
+            }
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("NotifyIcon", "UpdateIcon ERROR", ex);
+        }
+    }
+
+    /// <summary>
+    /// Reset to the default logo icon
+    /// </summary>
+    public void ResetToDefaultIcon()
+    {
+        if (!_created) return;
+
+        try
+        {
+            var newIconHandle = LoadLogoIcon();
+            if (newIconHandle == IntPtr.Zero) return;
+
+            var nid = new NOTIFYICONDATA
+            {
+                cbSize = Marshal.SizeOf<NOTIFYICONDATA>(),
+                hWnd = _hwnd,
+                uID = 1,
+                uFlags = NIF_ICON,
+                hIcon = newIconHandle
+            };
+
+            if (Shell_NotifyIcon(NIM_MODIFY, ref nid))
+            {
+                if (_iconHandle != IntPtr.Zero)
+                    DestroyIcon(_iconHandle);
+                _iconHandle = newIconHandle;
+            }
+            else
+            {
+                DestroyIcon(newIconHandle);
+            }
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("NotifyIcon", "ResetToDefaultIcon ERROR", ex);
+        }
+    }
+
     public void ShowContextMenu()
     {
         GetCursorPos(out POINT pt);
@@ -476,15 +620,22 @@ public class NotifyIconHelper : IDisposable
         {
             if (msg == WM_TRAYICON)
             {
+                // For NOTIFYICON_VERSION_4:
+                // LOWORD(lParam) = notification event (NIN_SELECT, WM_LBUTTONUP, etc.)
+                // HIWORD(lParam) = icon ID
+                // GET_X_LPARAM(wParam) = x coord
+                // GET_Y_LPARAM(wParam) = y coord
                 int mouseMsg = (int)(lParam.ToInt64() & 0xFFFF);
 
                 switch (mouseMsg)
                 {
                     case WM_LBUTTONUP:
+                    case NIN_SELECT:  // Primary click notification
                         _onLeftClick?.Invoke();
                         return IntPtr.Zero;
 
                     case WM_RBUTTONUP:
+                    case WM_CONTEXTMENU:  // Context menu request
                         _onRightClick?.Invoke();
                         return IntPtr.Zero;
 
@@ -518,7 +669,7 @@ public class NotifyIconHelper : IDisposable
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log", $"[{DateTime.Now}] WndProc ERROR: {ex.Message}\n");
+            DebugLogger.LogError("WndProc", "Error processing tray message", ex);
         }
 
         return CallWindowProc(_oldWndProc, hwnd, msg, wParam, lParam);
@@ -544,19 +695,20 @@ public class NotifyIconHelper : IDisposable
             if (System.IO.File.Exists(logoPath))
             {
                 using var originalBitmap = new System.Drawing.Bitmap(logoPath);
-                using var resizedBitmap = new System.Drawing.Bitmap(32, 32);
+                // Use 16x16 for standard system tray icon size
+                using var resizedBitmap = new System.Drawing.Bitmap(16, 16);
                 using (var g = System.Drawing.Graphics.FromImage(resizedBitmap))
                 {
                     g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
                     g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-                    g.DrawImage(originalBitmap, 0, 0, 32, 32);
+                    g.DrawImage(originalBitmap, 0, 0, 16, 16);
                 }
                 return resizedBitmap.GetHicon();
             }
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log", $"[{DateTime.Now}] LoadLogoIcon ERROR: {ex.Message}\n");
+            DebugLogger.LogError("NotifyIcon", "LoadLogoIcon ERROR", ex);
         }
         return IntPtr.Zero;
     }

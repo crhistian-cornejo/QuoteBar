@@ -58,7 +58,7 @@ public static class DebugLogger
     {
         var appDataPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "NativeBar",
+            "QuoteBar",
             "logs");
 
         return Path.Combine(appDataPath, $"debug_{DateTime.Now:yyyy-MM-dd}.log");

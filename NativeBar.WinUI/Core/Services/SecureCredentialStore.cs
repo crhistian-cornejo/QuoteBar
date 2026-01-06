@@ -9,7 +9,7 @@ namespace NativeBar.WinUI.Core.Services;
 /// </summary>
 public static class SecureCredentialStore
 {
-    private const string TargetPrefix = "NativeBar:";
+    private const string TargetPrefix = "QuoteBar:";
 
     #region Windows Credential Manager P/Invoke
 
@@ -75,7 +75,7 @@ public static class SecureCredentialStore
                     Flags = 0,
                     Type = CRED_TYPE_GENERIC,
                     TargetName = target,
-                    Comment = "NativeBar API Token",
+                    Comment = "QuoteBar API Token",
                     CredentialBlobSize = (uint)secretBytes.Length,
                     CredentialBlob = secretPtr,
                     Persist = CRED_PERSIST_LOCAL_MACHINE,

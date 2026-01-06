@@ -38,9 +38,9 @@ public static class Program
                 $"[{DateTime.Now}] PROGRAM ERROR: {ex.Message}\n{ex.StackTrace}\n");
             
             // Show message box with error
-            MessageBox(IntPtr.Zero, 
-                $"Error al iniciar NativeBar:\n\n{ex.Message}\n\n{ex.StackTrace}", 
-                "NativeBar Error", 
+            MessageBox(IntPtr.Zero,
+                $"Error al iniciar QuoteBar:\n\n{ex.Message}\n\n{ex.StackTrace}",
+                "QuoteBar Error",
                 0x10); // MB_ICONERROR
         }
     }

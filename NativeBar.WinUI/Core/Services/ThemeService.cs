@@ -41,12 +41,34 @@ public class ThemeService
         }
     }
 
+    private bool _lastAccentColorSetting = true;
+    private bool _lastCompactMode = false;
+    private bool _lastShowProviderIcons = true;
+
     private void OnSettingsChanged()
     {
+        var settings = SettingsService.Instance.Settings;
         var newTheme = GetEffectiveTheme();
-        if (newTheme != _currentTheme)
+        var themeChanged = newTheme != _currentTheme;
+        
+        // Check if accent color setting changed
+        var accentChanged = settings.UseSystemAccentColor != _lastAccentColorSetting;
+        _lastAccentColorSetting = settings.UseSystemAccentColor;
+        
+        // Check if appearance settings changed (these require UI rebuild)
+        var appearanceChanged = settings.CompactMode != _lastCompactMode || 
+                                settings.ShowProviderIcons != _lastShowProviderIcons;
+        _lastCompactMode = settings.CompactMode;
+        _lastShowProviderIcons = settings.ShowProviderIcons;
+        
+        if (themeChanged)
         {
             _currentTheme = newTheme;
+        }
+        
+        // Trigger ThemeChanged for any visual change that requires UI rebuild
+        if (themeChanged || accentChanged || appearanceChanged)
+        {
             ThemeChanged?.Invoke(_currentTheme);
         }
     }

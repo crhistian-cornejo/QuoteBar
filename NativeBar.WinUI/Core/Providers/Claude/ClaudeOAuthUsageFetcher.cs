@@ -95,7 +95,7 @@ public static class ClaudeOAuthUsageFetcher
         request.Headers.Add("Authorization", $"Bearer {accessToken}");
         request.Headers.Add("Accept", "application/json");
         request.Headers.Add("anthropic-beta", BetaHeader);
-        request.Headers.Add("User-Agent", "NativeBar");
+        request.Headers.Add("User-Agent", "QuoteBar");
 
         System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
             $"[{DateTime.Now}] ClaudeOAuthUsageFetcher: Fetching from {BaseUrl}{UsagePath}\n");
@@ -221,12 +221,12 @@ public static class ClaudeOAuthUsageFetcher
             };
         }
 
-        // Extra usage as cost
+        // Extra usage as cost (API returns cents, convert to dollars)
         if (response.ExtraUsage?.IsEnabled == true && response.ExtraUsage.UsedCredits.HasValue)
         {
             cost = new ProviderCost
             {
-                TotalCostUSD = response.ExtraUsage.UsedCredits.Value,
+                TotalCostUSD = response.ExtraUsage.UsedCredits.Value / 100.0,
                 StartDate = DateTime.UtcNow.Date.AddDays(-DateTime.UtcNow.Day + 1), // First of month
                 EndDate = DateTime.UtcNow
             };

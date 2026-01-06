@@ -70,6 +70,8 @@ public class UsageFetcher
     {
         var strategies = _descriptor.FetchStrategies;
         
+        Log($"[{_descriptor.Id}] FetchAsync: {strategies.Count} strategies available");
+        
         if (strategies.Count == 0)
         {
             return new UsageSnapshot
@@ -86,25 +88,35 @@ public class UsageFetcher
         {
             try
             {
+                Log($"[{_descriptor.Id}] Checking strategy: {strategy.StrategyName}");
+                
                 if (!await strategy.CanExecuteAsync())
                 {
+                    Log($"[{_descriptor.Id}] Strategy {strategy.StrategyName}: CanExecute=false, skipping");
                     continue;
                 }
                 
+                Log($"[{_descriptor.Id}] Strategy {strategy.StrategyName}: Executing...");
                 var snapshot = await strategy.FetchAsync(cancellationToken);
+                
                 if (snapshot.ErrorMessage == null)
                 {
+                    Log($"[{_descriptor.Id}] Strategy {strategy.StrategyName}: SUCCESS");
                     return snapshot;
                 }
                 
+                Log($"[{_descriptor.Id}] Strategy {strategy.StrategyName}: returned error: {snapshot.ErrorMessage}");
                 lastException = new Exception(snapshot.ErrorMessage);
             }
             catch (Exception ex)
             {
+                Log($"[{_descriptor.Id}] Strategy {strategy.StrategyName}: EXCEPTION: {ex.Message}");
                 lastException = ex;
                 // Continue to next strategy
             }
         }
+        
+        Log($"[{_descriptor.Id}] All strategies failed, last error: {lastException?.Message}");
         
         return new UsageSnapshot
         {
@@ -112,5 +124,15 @@ public class UsageFetcher
             ErrorMessage = lastException?.Message ?? "All fetch strategies failed",
             FetchedAt = DateTime.UtcNow
         };
+    }
+    
+    private static void Log(string message)
+    {
+        try
+        {
+            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
+                $"[{DateTime.Now}] UsageFetcher: {message}\n");
+        }
+        catch { }
     }
 }

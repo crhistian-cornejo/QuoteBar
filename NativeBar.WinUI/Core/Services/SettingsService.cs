@@ -10,7 +10,7 @@ public class SettingsService
 {
     private static readonly string SettingsPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "NativeBar",
+        "QuoteBar",
         "settings.json");
 
     private static SettingsService? _instance;
@@ -79,6 +79,10 @@ public class AppSettings
     public bool UseSystemAccentColor { get; set; } = true;
     public bool CompactMode { get; set; } = false;
     public bool ShowProviderIcons { get; set; } = true;
+
+    // Tray Badge Settings
+    public bool TrayBadgeEnabled { get; set; } = false;
+    public List<string> TrayBadgeProviders { get; set; } = new() { "claude", "gemini", "copilot" };
 
     // Notifications
     public bool UsageAlertsEnabled { get; set; } = true;

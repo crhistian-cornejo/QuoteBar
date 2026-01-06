@@ -6,13 +6,13 @@
   IgnorableNamespaces="uap rescap">
 
   <Identity
-    Name="NativeBar.WinUI"
-    Publisher="CN=NativeBar"
+    Name="QuoteBar.WinUI"
+    Publisher="CN=QuoteBar"
     Version="1.0.0.0" />
 
   <Properties>
-    <DisplayName>NativeBar</DisplayName>
-    <PublisherDisplayName>NativeBar</PublisherDisplayName>
+    <DisplayName>QuoteBar</DisplayName>
+    <PublisherDisplayName>QuoteBar</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
 
@@ -30,7 +30,7 @@
       Executable="$targetnametoken$.exe"
       EntryPoint="$targetentrypoint$">
       <uap:VisualElements
-        DisplayName="NativeBar - AI Usage Monitor"
+        DisplayName="QuoteBar - AI Usage Monitor"
         Description="Monitor AI API usage for Claude, Codex, GitHub Copilot, and more"
         BackgroundColor="transparent"
         Square150x150Logo="Assets\Square150x150Logo.png"

@@ -1,4 +1,5 @@
 using Microsoft.UI.Xaml;
+using NativeBar.WinUI.Core.Services;
 
 namespace NativeBar.WinUI.TrayPopup;
 
@@ -20,6 +21,10 @@ public class PopupStateManager
     private readonly DispatcherTimer _showDelayTimer;
     private readonly DispatcherTimer _hideDelayTimer;
 
+    // Default delays (can be overridden by settings)
+    private const int DefaultShowDelayMs = 300;
+    private const int DefaultHideDelayMs = 200;
+
     public event Action? ShowRequested;
     public event Action? HideRequested;
 
@@ -28,17 +33,46 @@ public class PopupStateManager
 
     public PopupStateManager()
     {
-        _showDelayTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+        // Initialize with settings or defaults
+        var showDelay = GetShowDelayFromSettings();
+        var hideDelay = DefaultHideDelayMs;
+
+        _showDelayTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(showDelay) };
         _showDelayTimer.Tick += OnShowDelayElapsed;
 
-        _hideDelayTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
+        _hideDelayTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(hideDelay) };
         _hideDelayTimer.Tick += OnHideDelayElapsed;
+
+        // Subscribe to settings changes to update delays dynamically
+        SettingsService.Instance.SettingsChanged += OnSettingsChanged;
+
+        DebugLogger.Log("PopupState", $"Initialized with showDelay={showDelay}ms, hideDelay={hideDelay}ms");
+    }
+
+    private void OnSettingsChanged()
+    {
+        var newShowDelay = GetShowDelayFromSettings();
+        _showDelayTimer.Interval = TimeSpan.FromMilliseconds(newShowDelay);
+        DebugLogger.Log("PopupState", $"Updated showDelay to {newShowDelay}ms");
+    }
+
+    private static int GetShowDelayFromSettings()
+    {
+        try
+        {
+            var delay = SettingsService.Instance.Settings.HoverDelayMs;
+            // Clamp to reasonable values
+            return Math.Clamp(delay, 50, 2000);
+        }
+        catch
+        {
+            return DefaultShowDelayMs;
+        }
     }
 
     public void OnMouseEnterTrayIcon()
     {
-        System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-            $"[{DateTime.Now}] PopupState: MouseEnterTrayIcon, current={_state}\n");
+        DebugLogger.LogDebug("PopupState", $"MouseEnterTrayIcon, current={_state}");
 
         switch (_state)
         {
@@ -56,8 +90,7 @@ public class PopupStateManager
 
     public void OnMouseLeaveTrayIcon()
     {
-        System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-            $"[{DateTime.Now}] PopupState: MouseLeaveTrayIcon, current={_state}\n");
+        DebugLogger.LogDebug("PopupState", $"MouseLeaveTrayIcon, current={_state}");
 
         switch (_state)
         {
@@ -77,8 +110,7 @@ public class PopupStateManager
 
     public void OnMouseEnterPopup()
     {
-        System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-            $"[{DateTime.Now}] PopupState: MouseEnterPopup, current={_state}\n");
+        DebugLogger.LogDebug("PopupState", $"MouseEnterPopup, current={_state}");
 
         if (_state == PopupState.ClosePending)
         {
@@ -89,8 +121,7 @@ public class PopupStateManager
 
     public void OnMouseLeavePopup()
     {
-        System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-            $"[{DateTime.Now}] PopupState: MouseLeavePopup, current={_state}\n");
+        DebugLogger.LogDebug("PopupState", $"MouseLeavePopup, current={_state}");
 
         if (_state == PopupState.HoverVisible)
         {
@@ -101,8 +132,7 @@ public class PopupStateManager
 
     public void OnTrayIconClick()
     {
-        System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-            $"[{DateTime.Now}] PopupState: TrayIconClick, current={_state}\n");
+        DebugLogger.Log("PopupState", $"TrayIconClick, current={_state}");
 
         switch (_state)
         {
@@ -129,8 +159,7 @@ public class PopupStateManager
 
     public void OnClickOutside()
     {
-        System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-            $"[{DateTime.Now}] PopupState: ClickOutside, current={_state}\n");
+        DebugLogger.LogDebug("PopupState", $"ClickOutside, current={_state}");
 
         if (_state == PopupState.Pinned)
         {

@@ -19,6 +19,11 @@ public partial class UsageStore : ObservableObject
     private readonly Dictionary<string, UsageSnapshot> _snapshots = new();
     private readonly Dictionary<string, UsageFetcher> _fetchers = new();
     private readonly Timer _refreshTimer;
+
+    /// <summary>
+    /// Event fired after all providers are refreshed (for tray badge updates)
+    /// </summary>
+    public event Action? AllProvidersRefreshed;
     
     public UsageStore()
     {
@@ -82,6 +87,13 @@ public partial class UsageStore : ObservableObject
         {
             var snapshot = await fetcher.FetchAsync();
             _snapshots[providerId] = snapshot;
+            
+            // Check for usage alerts after successful fetch
+            var provider = ProviderRegistry.Instance.GetProvider(providerId);
+            if (provider != null)
+            {
+                NotificationService.Instance.CheckAndNotifyUsage(providerId, provider.DisplayName, snapshot);
+            }
         }
         catch (Exception ex)
         {
@@ -100,6 +112,17 @@ public partial class UsageStore : ObservableObject
     {
         var tasks = ActiveProviderIds.Select(id => RefreshAsync(id));
         await Task.WhenAll(tasks);
+        
+        // Notify listeners that all providers have been refreshed
+        AllProvidersRefreshed?.Invoke();
+    }
+
+    /// <summary>
+    /// Get all current snapshots (for badge generation)
+    /// </summary>
+    public Dictionary<string, UsageSnapshot?> GetAllSnapshots()
+    {
+        return ActiveProviderIds.ToDictionary(id => id, id => GetSnapshot(id));
     }
     
     private async void OnRefreshTimer(object? state)

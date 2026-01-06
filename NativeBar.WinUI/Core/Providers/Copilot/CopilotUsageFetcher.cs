@@ -640,7 +640,7 @@ public static class CopilotUsageFetcher
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
         client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
         client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
-        client.DefaultRequestHeaders.Add("User-Agent", "NativeBar");
+        client.DefaultRequestHeaders.Add("User-Agent", "QuoteBar");
 
         return client;
     }

@@ -47,7 +47,7 @@ public class GitHubOAuthStrategy : IProviderFetchStrategy
         using var client = new HttpClient();
         client.DefaultRequestHeaders.Add("Authorization", $"token {token}");
         client.DefaultRequestHeaders.Add("Accept", "application/vnd.github.v3+json");
-        client.DefaultRequestHeaders.Add("User-Agent", "NativeBar");
+        client.DefaultRequestHeaders.Add("User-Agent", "QuoteBar");
         
         try
         {

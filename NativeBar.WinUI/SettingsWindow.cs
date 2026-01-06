@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
 using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Windowing;
@@ -6,8 +7,14 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Shapes;
+using NativeBar.WinUI.Core.Providers;
+using NativeBar.WinUI.Core.Providers.Claude;
+using NativeBar.WinUI.Core.Providers.Copilot;
+using NativeBar.WinUI.Core.Providers.Cursor;
+using NativeBar.WinUI.Core.Providers.Gemini;
 using NativeBar.WinUI.Core.Providers.Zai;
 using NativeBar.WinUI.Core.Services;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using Windows.Graphics;
@@ -44,6 +51,8 @@ public sealed class SettingsWindow : Window
     private ToggleSwitch? _startupToggle;
     private ComboBox? _intervalCombo;
     private Slider? _hoverSlider;
+    private ToggleSwitch? _trayBadgeToggle;
+    private StackPanel? _trayBadgeProvidersPanel;
 
     public SettingsWindow(string? initialPage = null)
     {
@@ -52,7 +61,7 @@ public sealed class SettingsWindow : Window
             System.IO.File.AppendAllText("D:\\NativeBar\\debug.log", $"[{DateTime.Now}] SettingsWindow constructor start\n");
 
             _initialPage = initialPage;
-            Title = "NativeBar Settings";
+            Title = "QuoteBar Settings";
 
             // Configure window
             var hwnd = WindowNative.GetWindowHandle(this);
@@ -306,7 +315,7 @@ public sealed class SettingsWindow : Window
         // Title text
         var titleText = new TextBlock
         {
-            Text = "NativeBar Settings",
+            Text = "QuoteBar Settings",
             FontSize = 12,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 0, 0)
@@ -413,16 +422,32 @@ public sealed class SettingsWindow : Window
 
         stack.Children.Add(CreateHeader("General Settings"));
 
-        // Start at login
-        _startupToggle = CreateToggleSwitch(_settings.Settings.StartAtLogin);
-        _startupToggle.Toggled += (s, e) =>
+        // Start at login - uses Windows Registry
+        var isStartupEnabled = StartupService.IsStartupEnabled();
+        _startupToggle = CreateToggleSwitch(isStartupEnabled);
+        _startupToggle.Toggled += async (s, e) =>
         {
+            var success = StartupService.SetStartupEnabled(_startupToggle.IsOn);
             _settings.Settings.StartAtLogin = _startupToggle.IsOn;
             _settings.Save();
+
+            if (!success)
+            {
+                var dialog = new ContentDialog
+                {
+                    Title = "Error",
+                    Content = "Failed to update startup setting. You may need to run as administrator.",
+                    CloseButtonText = "OK",
+                    XamlRoot = Content.XamlRoot
+                };
+                await dialog.ShowAsync();
+                // Revert toggle
+                _startupToggle.IsOn = !_startupToggle.IsOn;
+            }
         };
         stack.Children.Add(CreateSettingCard(
             "Start at login",
-            "Automatically start NativeBar when you log in to Windows",
+            "Automatically start QuoteBar when you log in to Windows",
             _startupToggle));
 
         // Refresh interval
@@ -448,7 +473,8 @@ public sealed class SettingsWindow : Window
             "How often to check for usage updates",
             _intervalCombo));
 
-        // Hover delay
+        // Hover delay with value display
+        var hoverPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
         _hoverSlider = new Slider
         {
             Minimum = 100,
@@ -457,15 +483,26 @@ public sealed class SettingsWindow : Window
             Width = 150,
             StepFrequency = 50
         };
+        var hoverValueText = new TextBlock
+        {
+            Text = $"{_settings.Settings.HoverDelayMs}ms",
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
+            MinWidth = 50
+        };
         _hoverSlider.ValueChanged += (s, e) =>
         {
-            _settings.Settings.HoverDelayMs = (int)_hoverSlider.Value;
+            var value = (int)_hoverSlider.Value;
+            _settings.Settings.HoverDelayMs = value;
+            hoverValueText.Text = $"{value}ms";
             _settings.Save();
         };
+        hoverPanel.Children.Add(_hoverSlider);
+        hoverPanel.Children.Add(hoverValueText);
         stack.Children.Add(CreateSettingCard(
             "Hover delay",
-            "Delay before showing popup on hover (ms)",
-            _hoverSlider));
+            "Delay before showing popup on hover",
+            hoverPanel));
 
         scroll.Content = stack;
         return scroll;
@@ -518,13 +555,13 @@ public sealed class SettingsWindow : Window
             Margin = new Thickness(0, 8, 0, 8)
         });
 
-        // Provider cards - using SVG icons where available
-        stack.Children.Add(CreateProviderCard("Codex", "codex", "#7C3AED", true, "CLI detected"));
-        stack.Children.Add(CreateProviderCard("Claude", "claude", "#D97757", true, "CLI detected"));
-        stack.Children.Add(CreateProviderCard("Cursor", "cursor", "#007AFF", false, "Not configured"));
-        stack.Children.Add(CreateProviderCard("Gemini", "gemini", "#4285F4", false, "Not configured"));
-        stack.Children.Add(CreateProviderCard("Copilot", "copilot", "#24292F", false, "Not configured"));
-        stack.Children.Add(CreateProviderCard("Droid", "droid", "#EE6018", false, "Not configured"));
+        // Provider cards - using dynamic status detection
+        stack.Children.Add(CreateProviderCardWithAutoDetect("Codex", "codex", "#7C3AED"));
+        stack.Children.Add(CreateProviderCardWithAutoDetect("Claude", "claude", "#D97757"));
+        stack.Children.Add(CreateProviderCardWithAutoDetect("Cursor", "cursor", "#007AFF"));
+        stack.Children.Add(CreateProviderCardWithAutoDetect("Gemini", "gemini", "#4285F4"));
+        stack.Children.Add(CreateProviderCardWithAutoDetect("Copilot", "copilot", "#24292F"));
+        stack.Children.Add(CreateProviderCardWithAutoDetect("Droid", "droid", "#EE6018"));
         stack.Children.Add(CreateZaiProviderCard());
 
         scroll.Content = stack;
@@ -660,40 +697,403 @@ public sealed class SettingsWindow : Window
         infoStack.Children.Add(statusStack);
         Grid.SetColumn(infoStack, 1);
 
-        // Configure button
-        var configButton = new Button
+        // Configure/Connect button with dropdown for connected providers
+        FrameworkElement buttonElement;
+        
+        if (isConnected)
         {
-            Content = isConnected ? "Configure" : "Connect",
-            Padding = new Thickness(16, 8, 16, 8)
-        };
-
-        if (!isConnected)
+            // Create a dropdown button for connected providers
+            var menuFlyout = new MenuFlyout();
+            
+            // Add "View Details" option
+            var viewItem = new MenuFlyoutItem { Text = "View Details" };
+            viewItem.Click += async (s, e) =>
+            {
+                var detailsContent = GetProviderDetailsContent(providerId);
+                var dialog = new ContentDialog
+                {
+                    Title = $"{name} - Connection Details",
+                    Content = detailsContent,
+                    CloseButtonText = "Close",
+                    XamlRoot = Content.XamlRoot
+                };
+                await dialog.ShowAsync();
+            };
+            menuFlyout.Items.Add(viewItem);
+            
+            // Add "Refresh" option
+            var refreshItem = new MenuFlyoutItem { Text = "Refresh Data" };
+            refreshItem.Click += async (s, e) =>
+            {
+                var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+                if (usageStore != null)
+                {
+                    await usageStore.RefreshAsync(providerId);
+                    ShowPage("Providers"); // Refresh the page
+                }
+            };
+            menuFlyout.Items.Add(refreshItem);
+            
+            menuFlyout.Items.Add(new MenuFlyoutSeparator());
+            
+            // Add "Disconnect" option
+            var disconnectItem = new MenuFlyoutItem 
+            { 
+                Text = "Disconnect",
+                Icon = new FontIcon { Glyph = "\uE7E8" } // Unlink icon
+            };
+            disconnectItem.Click += async (s, e) =>
+            {
+                var confirmDialog = new ContentDialog
+                {
+                    Title = $"Disconnect {name}?",
+                    Content = $"This will clear stored credentials for {name}. You'll need to reconnect to see usage data.",
+                    PrimaryButtonText = "Disconnect",
+                    CloseButtonText = "Cancel",
+                    DefaultButton = ContentDialogButton.Close,
+                    XamlRoot = Content.XamlRoot
+                };
+                
+                var result = await confirmDialog.ShowAsync();
+                if (result == ContentDialogResult.Primary)
+                {
+                    DisconnectProvider(providerId);
+                    ShowPage("Providers"); // Refresh the page
+                }
+            };
+            menuFlyout.Items.Add(disconnectItem);
+            
+            var dropDownButton = new DropDownButton
+            {
+                Content = "Configure",
+                Padding = new Thickness(16, 8, 16, 8),
+                Flyout = menuFlyout
+            };
+            buttonElement = dropDownButton;
+        }
+        else
         {
-            configButton.Background = new SolidColorBrush(_theme.AccentColor);
-            configButton.Foreground = new SolidColorBrush(Colors.White);
+            // Connect button for not connected providers
+            var connectButton = new Button
+            {
+                Content = "Connect",
+                Padding = new Thickness(16, 8, 16, 8),
+                Background = new SolidColorBrush(_theme.AccentColor),
+                Foreground = new SolidColorBrush(Colors.White)
+            };
+            
+            connectButton.Click += async (s, e) =>
+            {
+                await ShowConnectDialogAsync(name, providerId);
+            };
+            buttonElement = connectButton;
         }
 
-        configButton.Click += async (s, e) =>
-        {
-            // Show configuration dialog
-            var dialog = new ContentDialog
-            {
-                Title = $"Configure {name}",
-                Content = $"Provider configuration for {name} will be available in a future update.",
-                CloseButtonText = "OK",
-                XamlRoot = Content.XamlRoot
-            };
-            await dialog.ShowAsync();
-        };
-
-        Grid.SetColumn(configButton, 2);
+        Grid.SetColumn(buttonElement, 2);
 
         grid.Children.Add(iconElement);
         grid.Children.Add(infoStack);
-        grid.Children.Add(configButton);
+        grid.Children.Add(buttonElement);
         card.Child = grid;
 
         return card;
+    }
+
+    /// <summary>
+    /// Shows a connect dialog with provider-specific instructions
+    /// </summary>
+    private async Task ShowConnectDialogAsync(string name, string providerId)
+    {
+        string instructions = providerId.ToLower() switch
+        {
+            "cursor" => "To connect Cursor:\n\n" +
+                        "1. Open your browser (Edge, Chrome, or Firefox)\n" +
+                        "2. Go to cursor.com and log in\n" +
+                        "3. Come back here and click 'Retry Detection'\n\n" +
+                        "The app will automatically detect your session from the browser.",
+            
+            "gemini" => "To connect Gemini:\n\n" +
+                        "1. Install the Gemini CLI: npm install -g @anthropic-ai/gemini-cli\n" +
+                        "2. Run: gemini auth login\n" +
+                        "3. Complete the OAuth flow in your browser\n" +
+                        "4. Come back here and click 'Retry Detection'",
+            
+            "copilot" => "To connect GitHub Copilot:\n\n" +
+                         "1. Install GitHub CLI: winget install GitHub.cli\n" +
+                         "2. Run: gh auth login\n" +
+                         "3. Select 'GitHub.com' and complete authentication\n" +
+                         "4. Come back here and click 'Retry Detection'",
+            
+            "codex" => "To connect Codex:\n\n" +
+                       "1. Install the Codex CLI\n" +
+                       "2. Run: codex auth login\n" +
+                       "3. Come back here and click 'Retry Detection'",
+            
+            "claude" => "To connect Claude:\n\n" +
+                        "1. Install the Claude CLI: npm install -g @anthropic-ai/claude-cli\n" +
+                        "2. Run: claude auth login\n" +
+                        "3. Complete the OAuth flow in your browser\n" +
+                        "4. Come back here and click 'Retry Detection'",
+            
+            "droid" => "To connect Droid:\n\n" +
+                       "1. Install the Droid CLI\n" +
+                       "2. Make sure 'droid --version' works in terminal\n" +
+                       "3. Come back here and click 'Retry Detection'",
+            
+            _ => $"Configuration instructions for {name} are not yet available."
+        };
+        
+        var dialog = new ContentDialog
+        {
+            Title = $"Connect {name}",
+            Content = new TextBlock 
+            { 
+                Text = instructions, 
+                TextWrapping = TextWrapping.Wrap,
+                MaxWidth = 400
+            },
+            PrimaryButtonText = "Retry Detection",
+            CloseButtonText = "Close",
+            XamlRoot = Content.XamlRoot
+        };
+        
+        var result = await dialog.ShowAsync();
+        if (result == ContentDialogResult.Primary)
+        {
+            // Refresh the page to re-detect
+            ShowPage("Providers");
+        }
+    }
+
+    /// <summary>
+    /// Disconnects a provider by clearing its stored credentials
+    /// </summary>
+    private void DisconnectProvider(string providerId)
+    {
+        try
+        {
+            switch (providerId.ToLower())
+            {
+                case "cursor":
+                    CursorSessionStore.ClearSession();
+                    break;
+                    
+                case "claude":
+                    // Clear Claude OAuth credentials
+                    var claudePath = System.IO.Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                        ".claude", "credentials.json");
+                    if (File.Exists(claudePath))
+                        File.Delete(claudePath);
+                    break;
+                    
+                case "gemini":
+                    // Clear Gemini OAuth credentials
+                    var geminiPath = System.IO.Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                        ".gemini", "credentials.json");
+                    if (File.Exists(geminiPath))
+                        File.Delete(geminiPath);
+                    break;
+                    
+                case "copilot":
+                    // Note: gh CLI credentials are managed by gh, just clear our cache
+                    break;
+                    
+                case "zai":
+                    ZaiSettingsReader.DeleteApiToken();
+                    break;
+            }
+            
+            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
+                $"[{DateTime.Now}] DisconnectProvider: Disconnected {providerId}\n");
+        }
+        catch (Exception ex)
+        {
+            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
+                $"[{DateTime.Now}] DisconnectProvider ERROR ({providerId}): {ex.Message}\n");
+        }
+    }
+
+    /// <summary>
+    /// Gets details content for a connected provider
+    /// </summary>
+    private FrameworkElement GetProviderDetailsContent(string providerId)
+    {
+        var stack = new StackPanel { Spacing = 8 };
+        
+        var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+        var snapshot = usageStore?.GetSnapshot(providerId);
+        
+        if (snapshot != null && snapshot.ErrorMessage == null)
+        {
+            if (snapshot.Identity?.PlanType != null)
+            {
+                stack.Children.Add(new TextBlock 
+                { 
+                    Text = $"Plan: {snapshot.Identity.PlanType}",
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+                });
+            }
+            
+            if (snapshot.Primary != null)
+            {
+                stack.Children.Add(new TextBlock 
+                { 
+                    Text = $"Primary Usage: {snapshot.Primary.UsedPercent:F1}%"
+                });
+            }
+            
+            if (snapshot.Secondary != null)
+            {
+                stack.Children.Add(new TextBlock 
+                { 
+                    Text = $"Secondary Usage: {snapshot.Secondary.UsedPercent:F1}%"
+                });
+            }
+            
+            stack.Children.Add(new TextBlock 
+            { 
+                Text = $"Last Updated: {snapshot.FetchedAt:g}",
+                Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
+                FontSize = 12
+            });
+        }
+        else
+        {
+            stack.Children.Add(new TextBlock 
+            { 
+                Text = snapshot?.ErrorMessage ?? "No data available"
+            });
+        }
+        
+        return stack;
+    }
+
+    /// <summary>
+    /// Creates a provider card with automatic status detection based on UsageStore data
+    /// </summary>
+    private Border CreateProviderCardWithAutoDetect(string name, string providerId, string colorHex)
+    {
+        var (isConnected, status) = GetProviderStatus(providerId);
+        return CreateProviderCard(name, providerId, colorHex, isConnected, status);
+    }
+
+    /// <summary>
+    /// Detects the current status of a provider by checking:
+    /// 1. If we have cached usage data without errors -> Connected
+    /// 2. If provider strategies report they can execute -> Ready to connect
+    /// 3. Otherwise -> Not configured
+    /// </summary>
+    private (bool isConnected, string status) GetProviderStatus(string providerId)
+    {
+        try
+        {
+            // First check if we have successful usage data in the store
+            var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+            var snapshot = usageStore?.GetSnapshot(providerId);
+            
+            if (snapshot != null && snapshot.ErrorMessage == null && !snapshot.IsLoading && snapshot.Primary != null)
+            {
+                // We have actual data - provider is connected
+                var planInfo = snapshot.Identity?.PlanType ?? "Connected";
+                return (true, planInfo);
+            }
+
+            // Check provider-specific detection methods
+            switch (providerId.ToLower())
+            {
+                case "codex":
+                    if (CanDetectCLI("codex", "--version"))
+                        return (true, "CLI detected");
+                    break;
+                    
+                case "claude":
+                    // Check OAuth credentials or CLI
+                    var claudeCredentials = ClaudeOAuthCredentialsStore.TryLoad();
+                    if (claudeCredentials != null && !claudeCredentials.IsExpired)
+                        return (true, "OAuth connected");
+                    if (CanDetectCLI("claude", "--version"))
+                        return (true, "CLI detected");
+                    break;
+                    
+                case "cursor":
+                    if (CursorSessionStore.HasSession())
+                        return (true, "Session stored");
+                    if (CursorCookieImporter.HasSession())
+                        return (true, "Browser session found");
+                    break;
+                    
+                case "gemini":
+                    if (GeminiOAuthCredentialsStore.HasValidCredentials())
+                        return (true, "OAuth connected");
+                    if (CanDetectCLI("gemini", "--version"))
+                        return (true, "CLI detected");
+                    break;
+                    
+                case "copilot":
+                    var copilotCredentials = CopilotOAuthCredentialsStore.TryLoad();
+                    if (copilotCredentials != null && !copilotCredentials.IsExpired)
+                        return (true, "GitHub OAuth connected");
+                    if (CanDetectCLI("gh", "auth status"))
+                        return (true, "GitHub CLI authenticated");
+                    break;
+                    
+                case "droid":
+                    if (CanDetectCLI("droid", "--version"))
+                        return (true, "CLI detected");
+                    break;
+                    
+                case "zai":
+                    if (ZaiSettingsReader.HasApiToken())
+                        return (true, "API token configured");
+                    break;
+            }
+            
+            return (false, "Not configured");
+        }
+        catch (Exception ex)
+        {
+            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
+                $"[{DateTime.Now}] GetProviderStatus({providerId}) ERROR: {ex.Message}\n");
+            return (false, "Not configured");
+        }
+    }
+
+    /// <summary>
+    /// Quick check if a CLI tool is available (synchronous, with timeout)
+    /// </summary>
+    private bool CanDetectCLI(string command, string args)
+    {
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = command,
+                Arguments = args,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            using var process = Process.Start(startInfo);
+            if (process == null) return false;
+
+            // Wait max 2 seconds
+            var completed = process.WaitForExit(2000);
+            if (!completed)
+            {
+                try { process.Kill(); } catch { }
+                return false;
+            }
+
+            return process.ExitCode == 0;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private Border CreateZaiProviderCard()
@@ -789,7 +1189,18 @@ public sealed class SettingsWindow : Window
         {
             PlaceholderText = hasToken ? "Token stored securely (enter new to replace)" : "Enter your z.ai API token",
             Password = "", // Never pre-fill with actual token for security
-            Padding = new Thickness(12, 8, 12, 8)
+            Padding = new Thickness(12, 8, 12, 8),
+            MinHeight = 36,
+            MinWidth = 250,
+            VerticalAlignment = VerticalAlignment.Center,
+            IsEnabled = true,
+            Background = new SolidColorBrush(_theme.IsDarkMode 
+                ? Windows.UI.Color.FromArgb(255, 50, 50, 55) 
+                : Windows.UI.Color.FromArgb(255, 255, 255, 255)),
+            BorderBrush = new SolidColorBrush(_theme.IsDarkMode
+                ? Windows.UI.Color.FromArgb(100, 255, 255, 255)
+                : Windows.UI.Color.FromArgb(100, 0, 0, 0)),
+            BorderThickness = new Thickness(1)
         };
         Grid.SetColumn(tokenBox, 0);
 
@@ -1053,6 +1464,33 @@ public sealed class SettingsWindow : Window
             "Display icons next to provider names in tabs",
             _iconsToggle));
 
+        // Separator for Tray Badge section
+        stack.Children.Add(new TextBlock
+        {
+            Text = "System Tray Badge",
+            FontSize = 16,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Margin = new Thickness(0, 16, 0, 8)
+        });
+
+        // Tray Badge toggle
+        _trayBadgeToggle = CreateToggleSwitch(_settings.Settings.TrayBadgeEnabled);
+        _trayBadgeToggle.Toggled += (s, e) =>
+        {
+            _settings.Settings.TrayBadgeEnabled = _trayBadgeToggle.IsOn;
+            _settings.Save();
+            UpdateTrayBadgeProvidersVisibility();
+        };
+        stack.Children.Add(CreateSettingCard(
+            "Show usage badges in tray",
+            "Replace tray icon with usage percentages (remaining %)",
+            _trayBadgeToggle));
+
+        // Tray Badge providers selection
+        _trayBadgeProvidersPanel = CreateTrayBadgeProvidersPanel();
+        stack.Children.Add(_trayBadgeProvidersPanel);
+        UpdateTrayBadgeProvidersVisibility();
+
         scroll.Content = stack;
         return scroll;
     }
@@ -1063,19 +1501,6 @@ public sealed class SettingsWindow : Window
         var stack = new StackPanel { Spacing = 16 };
 
         stack.Children.Add(CreateHeader("Notifications"));
-
-        // Test notification button
-        var testButton = new Button
-        {
-            Content = "Send Test Notification",
-            Padding = new Thickness(16, 8, 16, 8),
-            Margin = new Thickness(0, 0, 0, 16)
-        };
-        testButton.Click += (s, e) =>
-        {
-            NotificationService.Instance.ShowToast("Test Notification", "This is a test notification from NativeBar!");
-        };
-        stack.Children.Add(testButton);
 
         // Usage alerts
         _alertsToggle = CreateToggleSwitch(_settings.Settings.UsageAlertsEnabled);
@@ -1148,7 +1573,7 @@ public sealed class SettingsWindow : Window
         var scroll = new ScrollViewer { Padding = new Thickness(24) };
         var stack = new StackPanel { Spacing = 16 };
 
-        stack.Children.Add(CreateHeader("About NativeBar"));
+        stack.Children.Add(CreateHeader("About QuoteBar"));
 
         // App info card
         var infoCard = new Border
@@ -1210,7 +1635,7 @@ public sealed class SettingsWindow : Window
 
         infoStack.Children.Add(new TextBlock
         {
-            Text = "NativeBar",
+            Text = "QuoteBar",
             FontSize = 24,
             FontWeight = Microsoft.UI.Text.FontWeights.Bold,
             HorizontalAlignment = HorizontalAlignment.Center
@@ -1359,6 +1784,142 @@ public sealed class SettingsWindow : Window
             OnContent = "",
             OffContent = ""
         };
+    }
+
+    private StackPanel CreateTrayBadgeProvidersPanel()
+    {
+        var panel = new StackPanel { Spacing = 8 };
+
+        var card = new Border
+        {
+            Background = new SolidColorBrush(_theme.CardColor),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(16)
+        };
+
+        var innerStack = new StackPanel { Spacing = 12 };
+
+        innerStack.Children.Add(new TextBlock
+        {
+            Text = "Select providers to show in tray (max 3)",
+            FontSize = 14,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+        });
+
+        innerStack.Children.Add(new TextBlock
+        {
+            Text = "Providers will show remaining % (100 - used)",
+            FontSize = 12,
+            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
+            Margin = new Thickness(0, 0, 0, 8)
+        });
+
+        // Provider checkboxes
+        var providers = new[] {
+            ("Claude", "claude", "#D97757"),
+            ("Gemini", "gemini", "#4285F4"),
+            ("Copilot", "copilot", "#24292F"),
+            ("Cursor", "cursor", "#007AFF"),
+            ("Codex", "codex", "#7C3AED"),
+            ("Droid", "droid", "#EE6018"),
+            ("z.ai", "zai", "#E85A6A")
+        };
+
+        foreach (var (displayName, id, color) in providers)
+        {
+            var isSelected = _settings.Settings.TrayBadgeProviders.Contains(id);
+            innerStack.Children.Add(CreateTrayBadgeProviderCheckbox(displayName, id, color, isSelected));
+        }
+
+        card.Child = innerStack;
+        panel.Children.Add(card);
+        return panel;
+    }
+
+    private Grid CreateTrayBadgeProviderCheckbox(string displayName, string providerId, string colorHex, bool isChecked)
+    {
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        // Checkbox
+        var checkbox = new CheckBox
+        {
+            IsChecked = isChecked,
+            Tag = providerId,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        checkbox.Checked += OnTrayBadgeProviderChanged;
+        checkbox.Unchecked += OnTrayBadgeProviderChanged;
+        Grid.SetColumn(checkbox, 0);
+
+        // Color dot
+        var colorDot = new Ellipse
+        {
+            Width = 10,
+            Height = 10,
+            Fill = new SolidColorBrush(ParseColor(colorHex)),
+            Margin = new Thickness(4, 0, 8, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        Grid.SetColumn(colorDot, 1);
+
+        // Name
+        var nameText = new TextBlock
+        {
+            Text = displayName,
+            FontSize = 13,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        Grid.SetColumn(nameText, 2);
+
+        grid.Children.Add(checkbox);
+        grid.Children.Add(colorDot);
+        grid.Children.Add(nameText);
+
+        return grid;
+    }
+
+    private void OnTrayBadgeProviderChanged(object sender, RoutedEventArgs e)
+    {
+        if (sender is not CheckBox checkbox) return;
+        var providerId = checkbox.Tag?.ToString();
+        if (string.IsNullOrEmpty(providerId)) return;
+
+        var isChecked = checkbox.IsChecked == true;
+        var providers = _settings.Settings.TrayBadgeProviders;
+
+        if (isChecked)
+        {
+            // Check if already at max (3)
+            if (providers.Count >= 3 && !providers.Contains(providerId))
+            {
+                // Uncheck and show message
+                checkbox.IsChecked = false;
+                return;
+            }
+            if (!providers.Contains(providerId))
+            {
+                providers.Add(providerId);
+            }
+        }
+        else
+        {
+            providers.Remove(providerId);
+        }
+
+        _settings.Save();
+    }
+
+    private void UpdateTrayBadgeProvidersVisibility()
+    {
+        if (_trayBadgeProvidersPanel != null)
+        {
+            _trayBadgeProvidersPanel.Visibility = _settings.Settings.TrayBadgeEnabled
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
     }
 
     private string? GetProviderSvgFileName(string providerId, bool forIconWithBackground = false)
