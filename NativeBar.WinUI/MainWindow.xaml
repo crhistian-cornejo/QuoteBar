@@ -1,0 +1,43 @@
+<Window
+    x:Class="NativeBar.WinUI.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="NativeBar">
+
+    <Grid Background="#1a1a2e" Padding="20">
+        <StackPanel Spacing="16" VerticalAlignment="Center" HorizontalAlignment="Center">
+            
+            <TextBlock 
+                Text="NativeBar"
+                FontSize="28"
+                FontWeight="Bold"
+                Foreground="White"
+                HorizontalAlignment="Center"/>
+            
+            <TextBlock 
+                Text="AI Usage Monitor"
+                FontSize="14"
+                Foreground="#888"
+                HorizontalAlignment="Center"/>
+            
+            <Border 
+                Background="#2d2d44" 
+                CornerRadius="8" 
+                Padding="16"
+                Margin="0,20,0,0">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="Welcome!" FontSize="16" FontWeight="SemiBold" Foreground="White"/>
+                    <TextBlock Text="Configure providers to start monitoring your AI usage." Foreground="#aaa" TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+            
+            <Button 
+                x:Name="RefreshButton"
+                Content="Refresh All Providers"
+                HorizontalAlignment="Stretch"
+                Click="OnRefreshClick"
+                Margin="0,10,0,0"/>
+                
+        </StackPanel>
+    </Grid>
+</Window>

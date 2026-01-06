@@ -1,0 +1,70 @@
+# Build outputs
+bin/
+obj/
+out/
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Rider
+.idea/
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# NuGet
+*.nupkg
+packages/
+!packages/build/
+
+# Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# JetBrains Rider
+*.sln.iml
+
+# App specific
+*.appinstaller
+*.msix
+*.msixbundle
+*.appxupload
+
+# Temporary files
+*.tmp
+*.temp
+~$*
+
+# Debug logs
+debug.log
+
+# Old Tauri project (to be removed)
+quobar/
+
+# Problematic Windows reserved files
+nul
+
+# Local docs and scripts (not for repo)
+GUIA_USO.md
+run.bat
+
+# Node modules (if any)
+node_modules/
+
+# Generated files
+Generated Files/
