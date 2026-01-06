@@ -367,23 +367,33 @@ public static class GeminiUsageFetcher
         }
     }
 
-    // Model tier classification
+    // Model tier classification - includes all known Gemini model families
     private static readonly HashSet<string> ProModels = new(StringComparer.OrdinalIgnoreCase)
     {
+        // Gemini 3.x Pro family
+        "gemini-3.0-pro",
+        "gemini-3-pro",
+        // Gemini 2.x Pro family
+        "gemini-2.5-pro",
         "gemini-2.0-pro",
+        // Gemini 1.x Pro family
         "gemini-1.5-pro",
         "gemini-pro",
-        "gemini-3-pro",
+        // Ultra
         "gemini-ultra"
     };
 
     private static readonly HashSet<string> FlashModels = new(StringComparer.OrdinalIgnoreCase)
     {
-        "gemini-2.0-flash",
-        "gemini-1.5-flash",
-        "gemini-flash",
+        // Gemini 3.x Flash family
+        "gemini-3.0-flash",
         "gemini-3-flash",
-        "gemini-2.5-flash"
+        // Gemini 2.x Flash family
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        // Gemini 1.x Flash family
+        "gemini-1.5-flash",
+        "gemini-flash"
     };
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -722,20 +732,33 @@ public static class GeminiUsageFetcher
     {
         if (string.IsNullOrEmpty(modelId)) return null;
 
-        // Shorten model names for display
-        return modelId
+        // Normalize model ID for pattern matching
+        var normalized = modelId
             .Replace("gemini-", "")
             .Replace("-", " ")
-            .ToUpperInvariant() switch
+            .ToUpperInvariant();
+
+        // Format model names for display - ordered by newest first
+        return normalized switch
         {
+            // Gemini 3.x
+            var s when s.Contains("3.0 PRO") || s.Contains("3 PRO") => "3.0 Pro",
+            var s when s.Contains("3.0 FLASH") || s.Contains("3 FLASH") => "3.0 Flash",
+            // Gemini 2.5
+            var s when s.Contains("2.5 PRO") => "2.5 Pro",
+            var s when s.Contains("2.5 FLASH") => "2.5 Flash",
+            // Gemini 2.0
             var s when s.Contains("2.0 PRO") => "2.0 Pro",
             var s when s.Contains("2.0 FLASH") => "2.0 Flash",
-            var s when s.Contains("2.5 FLASH") => "2.5 Flash",
+            // Gemini 1.5
             var s when s.Contains("1.5 PRO") => "1.5 Pro",
             var s when s.Contains("1.5 FLASH") => "1.5 Flash",
-            var s when s.Contains("3 PRO") => "3 Pro",
-            var s when s.Contains("3 FLASH") => "3 Flash",
-            _ => modelId.Replace("gemini-", "")
+            // Generic Pro/Flash
+            var s when s.Contains("PRO") => "Pro",
+            var s when s.Contains("FLASH") => "Flash",
+            var s when s.Contains("ULTRA") => "Ultra",
+            // Fallback: clean up the model ID
+            _ => modelId.Replace("gemini-", "").Replace("-", " ")
         };
     }
 
