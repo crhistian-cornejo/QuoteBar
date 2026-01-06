@@ -20,6 +20,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.*" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.*" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2739.15" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.0" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="9.0.0" />
@@ -27,7 +28,9 @@
     <PackageReference Include="H.NotifyIcon.WinUI" Version="2.1.4" />
     <PackageReference Include="System.Drawing.Common" Version="8.0.10" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
-    <PackageReference Include="System.Data.SQLite.Core" Version="1.0.119" />
+    <!-- NOTE: System.Data.SQLite was REMOVED to avoid antivirus detection.
+         The browser cookie import feature that required it has been replaced
+         with WebView2-based login which is more secure and user-transparent. -->
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
   </ItemGroup>
 

@@ -20,11 +20,13 @@ public class CursorProviderDescriptor : ProviderDescriptor
         // Priority order:
         // 1. Cached data (if valid) - fastest, no network
         // 2. Manual cookie header (user explicitly provided)
-        // 3. Browser cookie import (automatic from Edge/Chrome/Firefox)
-        // 4. Stored session (from previous successful import or WebView login)
+        // 3. Stored session (from previous WebView login)
+        // 
+        // NOTE: Browser cookie import was REMOVED because it triggered antivirus
+        // detections (SOPHOS Creds_6a / MITRE T1555.003 - Credentials from Web Browsers).
+        // The secure alternative is WebView2 login which requires user interaction.
         AddStrategy(new CursorCachedStrategy());
         AddStrategy(new CursorManualCookieStrategy());
-        AddStrategy(new CursorBrowserCookieStrategy());
         AddStrategy(new CursorStoredSessionStrategy());
     }
 }
@@ -166,104 +168,16 @@ public class CursorManualCookieStrategy : IProviderFetchStrategy
 
 #endregion
 
-#region Strategy 2: Browser Cookie Import
-
-/// <summary>
-/// Strategy that imports cookies directly from installed browsers.
-/// Automatically detects Edge, Chrome, Firefox, and Brave.
-/// </summary>
-public class CursorBrowserCookieStrategy : IProviderFetchStrategy
-{
-    public string StrategyName => "Browser Import";
-    public int Priority => 2;
-
-    public Task<bool> CanExecuteAsync()
-    {
-        // Always available as an option
-        Log("CanExecute: true (always available)");
-        return Task.FromResult(true);
-    }
-
-    public async Task<UsageSnapshot> FetchAsync(CancellationToken cancellationToken = default)
-    {
-        Log("FetchAsync: Starting browser cookie import");
-        // Check rate limit
-        if (!CursorRateLimiter.IsRequestAllowed("browser"))
-        {
-            var waitTime = CursorRateLimiter.GetWaitTime("browser");
-            Log($"Rate limited, wait {waitTime.TotalSeconds:F0}s");
-            return await CursorUsageCache.GetUsageAsync(forceRefresh: false, cancellationToken: cancellationToken);
-        }
-
-        try
-        {
-            Log("Attempting browser cookie import");
-
-            var session = CursorCookieImporter.ImportSession(logger: Log);
-
-            if (session == null)
-            {
-                return CreateError(CursorErrorMessages.NoBrowserSession);
-            }
-
-            Log($"Found session in {session.SourceLabel}");
-
-            var snapshot = await CursorUsageFetcher.FetchAsync(
-                session.CookieHeader,
-                Log,
-                cancellationToken);
-
-            // Save successful session for future use
-            CursorSessionStore.SetSession(session, snapshot.AccountEmail);
-            Log($"Session cached for {snapshot.AccountEmail ?? "unknown user"}");
-
-            return snapshot.ToUsageSnapshot();
-        }
-        catch (CursorFetchException ex) when (ex.ErrorType == CursorFetchError.NotLoggedIn)
-        {
-            return CreateError(CursorErrorMessages.BrowserCookiesExpired);
-        }
-        catch (CursorFetchException ex) when (ex.ErrorType == CursorFetchError.NetworkError)
-        {
-            return CreateError(CursorErrorMessages.NetworkError(ex.Message));
-        }
-        catch (Exception ex)
-        {
-            Log($"Browser import failed: {ex.Message}");
-            return CreateError(CursorErrorMessages.BrowserImportFailed(ex.Message));
-        }
-    }
-
-    private static UsageSnapshot CreateError(string message) => new()
-    {
-        ProviderId = "cursor",
-        ErrorMessage = message,
-        FetchedAt = DateTime.UtcNow
-    };
-
-    private static void Log(string message)
-    {
-        try
-        {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] CursorBrowserStrategy: {message}\n");
-        }
-        catch { }
-    }
-}
-
-#endregion
-
-#region Strategy 3: Stored Session
+#region Strategy 2: Stored Session
 
 /// <summary>
 /// Strategy that uses a previously stored session.
-/// Fallback when browser import fails (e.g., browser is running and locks cookies).
+/// This is the primary method after WebView login is completed.
 /// </summary>
 public class CursorStoredSessionStrategy : IProviderFetchStrategy
 {
     public string StrategyName => "Stored Session";
-    public int Priority => 3;
+    public int Priority => 2;
 
     public Task<bool> CanExecuteAsync()
     {
@@ -338,7 +252,7 @@ public class CursorStoredSessionStrategy : IProviderFetchStrategy
 
 /// <summary>
 /// Static helper for fetching Cursor usage with automatic fallback and caching.
-/// Tries all methods in order: Cache → Manual → Browser Import → Stored Session
+/// Tries all methods in order: Cache → Manual → Stored Session
 /// </summary>
 public static class CursorUsageProbe
 {
@@ -378,12 +292,8 @@ public static class CursorUsageProbe
     /// </summary>
     public static bool HasSession(Action<string>? logger = null)
     {
-        // Check stored session first (fastest)
-        if (CursorSessionStore.HasSession())
-            return true;
-
-        // Check browser cookies
-        return CursorCookieImporter.HasSession(logger);
+        // Check stored session (from WebView login or manual cookie)
+        return CursorSessionStore.HasSession();
     }
 
     /// <summary>
@@ -418,25 +328,16 @@ public static class CursorErrorMessages
         "No manual cookie configured. Go to Settings > Cursor to paste your cookie header.";
 
     public const string CookieExpired =
-        "Your Cursor cookie has expired. Please get a fresh cookie from cursor.com.";
-
-    public const string NoBrowserSession =
-        "No Cursor session found in your browsers. Please log in to cursor.com in Edge, Chrome, or Firefox.";
-
-    public const string BrowserCookiesExpired =
-        "Browser cookies are expired or invalid. Please log in to cursor.com again.";
+        "Your Cursor cookie has expired. Please sign in again via Settings > Cursor.";
 
     public const string NoStoredSession =
-        "No saved Cursor session. Please log in to cursor.com in your browser.";
+        "Not signed in to Cursor. Go to Settings > Cursor to sign in.";
 
     public const string SessionExpired =
-        "Your saved session has expired. Please log in to cursor.com in your browser.";
+        "Your Cursor session has expired. Please sign in again via Settings > Cursor.";
 
     public static string NetworkError(string details) =>
         $"Network error connecting to Cursor. Check your internet connection. ({details})";
-
-    public static string BrowserImportFailed(string details) =>
-        $"Could not import cookies from browser. The browser may be locking the cookie file. Try closing it. ({details})";
 
     public static string UnexpectedError(string details) =>
         $"An unexpected error occurred. ({details})";
@@ -448,15 +349,15 @@ public static class CursorErrorMessages
     {
         if (errorMessage.Contains("expired", StringComparison.OrdinalIgnoreCase))
         {
-            return "Tip: Log in to cursor.com in your browser, then refresh.";
+            return "Tip: Go to Settings > Cursor and click 'Sign In' to refresh your session.";
         }
         if (errorMessage.Contains("network", StringComparison.OrdinalIgnoreCase))
         {
             return "Tip: Check your internet connection and firewall settings.";
         }
-        if (errorMessage.Contains("browser", StringComparison.OrdinalIgnoreCase))
+        if (errorMessage.Contains("sign in", StringComparison.OrdinalIgnoreCase))
         {
-            return "Tip: Close your browser completely and try again.";
+            return "Tip: Go to Settings > Cursor to sign in with your Cursor account.";
         }
         return "Tip: Go to Settings > Cursor to configure authentication.";
     }

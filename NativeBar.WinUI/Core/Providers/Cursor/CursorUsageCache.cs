@@ -68,24 +68,12 @@ public static class CursorUsageCache
             
             if (string.IsNullOrEmpty(cookieHeader))
             {
-                // Try browser import
-                log("No stored session, trying browser import");
-                var session = CursorCookieImporter.ImportSession(logger: logger);
-                if (session != null)
-                {
-                    cookieHeader = session.CookieHeader;
-                    CursorSessionStore.SetSession(session);
-                    log($"Imported session from {session.SourceLabel}");
-                }
-            }
-            
-            if (string.IsNullOrEmpty(cookieHeader))
-            {
-                log("No cookie available");
+                // No stored session - user needs to log in via WebView
+                log("No stored session available. User needs to log in via Settings.");
                 return new UsageSnapshot
                 {
                     ProviderId = "cursor",
-                    ErrorMessage = CursorErrorMessages.NoBrowserSession,
+                    ErrorMessage = CursorErrorMessages.NoStoredSession,
                     FetchedAt = DateTime.UtcNow
                 };
             }

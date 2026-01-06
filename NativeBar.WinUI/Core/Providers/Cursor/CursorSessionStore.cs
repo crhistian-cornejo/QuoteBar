@@ -7,6 +7,30 @@ using NativeBar.WinUI.Core.Services;
 namespace NativeBar.WinUI.Core.Providers.Cursor;
 
 /// <summary>
+/// Represents a session with cookies obtained from WebView login
+/// </summary>
+public sealed class CursorSessionInfo
+{
+    public required string CookieHeader { get; init; }
+    public required string SourceLabel { get; init; }
+    public required List<BrowserCookie> Cookies { get; init; }
+}
+
+/// <summary>
+/// Represents a single cookie from the session
+/// </summary>
+public sealed class BrowserCookie
+{
+    public required string Name { get; init; }
+    public required string Value { get; init; }
+    public required string Domain { get; init; }
+    public required string Path { get; init; }
+    public DateTime? Expires { get; init; }
+    public bool IsSecure { get; init; }
+    public bool IsHttpOnly { get; init; }
+}
+
+/// <summary>
 /// Stored session metadata for Cursor (persisted to disk).
 /// SECURITY: Cookie header is stored in Credential Manager, NOT in this file.
 /// </summary>
