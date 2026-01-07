@@ -9,6 +9,7 @@ using NativeBar.WinUI.Core.Providers.Gemini;
 using NativeBar.WinUI.Core.Providers.Copilot;
 using NativeBar.WinUI.Core.Providers.Zai;
 using NativeBar.WinUI.Core.Providers.Augment;
+using NativeBar.WinUI.Core.Providers.MiniMax;
 
 namespace NativeBar.WinUI.Core.Providers;
 
@@ -40,21 +41,26 @@ public class ProviderRegistry
     
     public IReadOnlyList<IProviderDescriptor> GetAllProviders()
     {
-        return _providers.Values.ToList().AsReadOnly();
+        // Return providers sorted alphabetically by display name
+        return _providers.Values
+            .OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToList()
+            .AsReadOnly();
     }
     
     private void RegisterDefaultProviders()
     {
-        // Register built-in providers (order matters for tab display)
-        Register(new CodexProviderDescriptor());
-        Register(new ClaudeProviderDescriptor());
-        Register(new CursorProviderDescriptor());
+        // Register built-in providers (alphabetical order)
         Register(new AntigravityProviderDescriptor());
+        Register(new AugmentProviderDescriptor());
+        Register(new ClaudeProviderDescriptor());
+        Register(new CodexProviderDescriptor());
+        Register(new CopilotProviderDescriptor());
+        Register(new CursorProviderDescriptor());
         Register(new DroidProviderDescriptor());
         Register(new GeminiProviderDescriptor());
-        Register(new CopilotProviderDescriptor());
+        Register(new MiniMaxProviderDescriptor());
         Register(new ZaiProviderDescriptor());
-        Register(new AugmentProviderDescriptor());
     }
 }
 
@@ -161,6 +167,7 @@ public class UsageFetcher
             "droid" => "Not authenticated. Click 'Connect' to sign in.",
             "antigravity" => "Not detected. Launch Antigravity IDE and sign in.",
             "zai" => "No API token. Enter your z.ai API token in Settings.",
+            "minimax" => "No cookie configured. Paste your MiniMax cookie header in Settings.",
             "augment" => "Not authenticated. Configure cookie in Settings or log in at app.augmentcode.com.",
             _ => "Not configured. Set up this provider in Settings."
         };
