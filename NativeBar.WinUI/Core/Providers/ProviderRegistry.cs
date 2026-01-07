@@ -8,6 +8,7 @@ using NativeBar.WinUI.Core.Providers.Droid;
 using NativeBar.WinUI.Core.Providers.Gemini;
 using NativeBar.WinUI.Core.Providers.Copilot;
 using NativeBar.WinUI.Core.Providers.Zai;
+using NativeBar.WinUI.Core.Providers.Augment;
 
 namespace NativeBar.WinUI.Core.Providers;
 
@@ -53,6 +54,7 @@ public class ProviderRegistry
         Register(new GeminiProviderDescriptor());
         Register(new CopilotProviderDescriptor());
         Register(new ZaiProviderDescriptor());
+        Register(new AugmentProviderDescriptor());
     }
 }
 
@@ -71,9 +73,9 @@ public class UsageFetcher
     public async Task<UsageSnapshot> FetchAsync(CancellationToken cancellationToken = default)
     {
         var strategies = _descriptor.FetchStrategies;
-        
+
         Log($"[{_descriptor.Id}] FetchAsync: {strategies.Count} strategies available");
-        
+
         if (strategies.Count == 0)
         {
             return new UsageSnapshot
@@ -83,48 +85,84 @@ public class UsageFetcher
                 FetchedAt = DateTime.UtcNow
             };
         }
-        
+
         Exception? lastException = null;
-        
+        var allStrategiesSkipped = true;
+        var skippedStrategies = new List<string>();
+
         foreach (var strategy in strategies)
         {
             try
             {
                 Log($"[{_descriptor.Id}] Checking strategy: {strategy.StrategyName}");
-                
+
                 if (!await strategy.CanExecuteAsync())
                 {
                     Log($"[{_descriptor.Id}] Strategy {strategy.StrategyName}: CanExecute=false, skipping");
+                    skippedStrategies.Add(strategy.StrategyName);
                     continue;
                 }
-                
+
+                allStrategiesSkipped = false;
                 Log($"[{_descriptor.Id}] Strategy {strategy.StrategyName}: Executing...");
                 var snapshot = await strategy.FetchAsync(cancellationToken);
-                
+
                 if (snapshot.ErrorMessage == null)
                 {
                     Log($"[{_descriptor.Id}] Strategy {strategy.StrategyName}: SUCCESS");
                     return snapshot;
                 }
-                
+
                 Log($"[{_descriptor.Id}] Strategy {strategy.StrategyName}: returned error: {snapshot.ErrorMessage}");
                 lastException = new Exception(snapshot.ErrorMessage);
             }
             catch (Exception ex)
             {
+                allStrategiesSkipped = false;
                 Log($"[{_descriptor.Id}] Strategy {strategy.StrategyName}: EXCEPTION: {ex.Message}");
                 lastException = ex;
                 // Continue to next strategy
             }
         }
-        
+
         Log($"[{_descriptor.Id}] All strategies failed, last error: {lastException?.Message}");
-        
+
+        // If all strategies were skipped (none could execute), provide helpful message
+        string errorMessage;
+        if (allStrategiesSkipped)
+        {
+            errorMessage = GetNoCredentialsMessage(_descriptor.Id);
+        }
+        else
+        {
+            errorMessage = lastException?.Message ?? "All fetch strategies failed";
+        }
+
         return new UsageSnapshot
         {
             ProviderId = _descriptor.Id,
-            ErrorMessage = lastException?.Message ?? "All fetch strategies failed",
+            ErrorMessage = errorMessage,
             FetchedAt = DateTime.UtcNow
+        };
+    }
+
+    /// <summary>
+    /// Get a user-friendly message when no credentials are available
+    /// </summary>
+    private static string GetNoCredentialsMessage(string providerId)
+    {
+        return providerId.ToLower() switch
+        {
+            "claude" => "Not authenticated. Run 'claude' CLI to login.",
+            "codex" => "Not authenticated. Run 'codex auth login' to login.",
+            "gemini" => "Not authenticated. Run 'gemini auth login' to login.",
+            "copilot" => "Not authenticated. Click 'Connect' to sign in with GitHub.",
+            "cursor" => "Not authenticated. Click 'Connect' to sign in.",
+            "droid" => "Not authenticated. Click 'Connect' to sign in.",
+            "antigravity" => "Not detected. Launch Antigravity IDE and sign in.",
+            "zai" => "No API token. Enter your z.ai API token in Settings.",
+            "augment" => "Not authenticated. Configure cookie in Settings or log in at app.augmentcode.com.",
+            _ => "Not configured. Set up this provider in Settings."
         };
     }
     

@@ -140,6 +140,17 @@ public partial class App : Application
             // _hotkeyService.Initialize(hwnd);
             // _notifyIcon.SetHotkeyService(_hotkeyService);
 
+            // Initialize Provider Status Polling (polls statuspage.io for incidents)
+            try
+            {
+                ProviderStatusService.Instance.StartPolling(intervalSeconds: 300); // Every 5 minutes
+                DebugLogger.Log("App", "Provider status polling started");
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.LogError("App", "Failed to start provider status polling", ex);
+            }
+
             // Activate and hide
             _hiddenWindow.Activate();
             ShowWindow(hwnd, 0);
@@ -180,6 +191,7 @@ public partial class App : Application
     private void OnExitClick()
     {
         DebugLogger.Log("App", "Exiting...");
+        ProviderStatusService.Instance.StopPolling();
         _hotkeyService?.Dispose();
         _trayIconsService?.Dispose();
         _taskbarOverlay?.Dispose();

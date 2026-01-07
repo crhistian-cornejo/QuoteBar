@@ -73,21 +73,43 @@ public partial class TrayPopupViewModel : ObservableObject
 
     public string FormatResetTime(RateWindow? window)
     {
-        if (window?.ResetsAt == null)
+        if (window == null)
             return "";
 
-        var remaining = window.ResetsAt.Value - DateTime.UtcNow;
+        // If we have a ResetsAt timestamp, use it for precise countdown
+        if (window.ResetsAt.HasValue)
+        {
+            var remaining = window.ResetsAt.Value - DateTime.UtcNow;
 
-        if (remaining.TotalSeconds <= 0)
-            return "Resetting...";
+            if (remaining.TotalSeconds <= 0)
+                return "Resetting...";
 
-        if (remaining.TotalMinutes < 60)
-            return $"Resets in {(int)remaining.TotalMinutes}m";
+            if (remaining.TotalMinutes < 60)
+                return $"Resets in {(int)remaining.TotalMinutes}m";
 
-        if (remaining.TotalHours < 24)
-            return $"Resets in {(int)remaining.TotalHours}h {remaining.Minutes}m";
+            if (remaining.TotalHours < 24)
+                return $"Resets in {(int)remaining.TotalHours}h {remaining.Minutes}m";
 
-        return $"Resets in {(int)remaining.TotalDays}d";
+            if (remaining.TotalDays < 7)
+                return $"Resets in {(int)remaining.TotalDays}d {remaining.Hours}h";
+
+            return $"Resets in {(int)remaining.TotalDays}d";
+        }
+
+        // Fall back to ResetDescription if available
+        if (!string.IsNullOrEmpty(window.ResetDescription))
+        {
+            // Add "Resets" prefix if not already present
+            var desc = window.ResetDescription;
+            if (!desc.StartsWith("Resets", StringComparison.OrdinalIgnoreCase) &&
+                !desc.StartsWith("in ", StringComparison.OrdinalIgnoreCase))
+            {
+                return $"Resets {desc}";
+            }
+            return desc;
+        }
+
+        return "";
     }
 
     public string FormatUsage(RateWindow? window)

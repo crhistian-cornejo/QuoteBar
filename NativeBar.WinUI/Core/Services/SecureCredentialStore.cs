@@ -208,4 +208,5 @@ public static class CredentialKeys
     public const string CopilotToken = "copilot-token";
     public const string MinimaxApiKey = "minimax-api-key";
     public const string MinimaxGroupId = "minimax-group-id";
+    public const string AugmentCookie = "augment-cookie";
 }

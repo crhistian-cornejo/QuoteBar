@@ -16,6 +16,7 @@ using NativeBar.WinUI.Core.Providers.Cursor;
 using NativeBar.WinUI.Core.Providers.Droid;
 using NativeBar.WinUI.Core.Providers.Gemini;
 using NativeBar.WinUI.Core.Providers.Zai;
+using NativeBar.WinUI.Core.Providers.Augment;
 using NativeBar.WinUI.Core.Services;
 using NativeBar.WinUI.Settings.Controls;
 using NativeBar.WinUI.Settings.Helpers;
@@ -85,6 +86,7 @@ public class ProvidersSettingsPage : ISettingsPage
             visibilityStack.Children.Add(CreateProviderToggle("Droid", "droid", "#EE6018"));
             visibilityStack.Children.Add(CreateProviderToggle("Antigravity", "antigravity", "#FF6B6B"));
             visibilityStack.Children.Add(CreateProviderToggle("z.ai", "zai", "#E85A6A"));
+            visibilityStack.Children.Add(CreateProviderToggle("Augment", "augment", "#6366F1"));
 
             visibilityCard.Child = visibilityStack;
             stack.Children.Add(visibilityCard);
@@ -107,6 +109,7 @@ public class ProvidersSettingsPage : ISettingsPage
             stack.Children.Add(CreateProviderCardWithAutoDetect("Droid", "droid", "#EE6018"));
             stack.Children.Add(CreateProviderCardWithAutoDetect("Antigravity", "antigravity", "#FF6B6B"));
             stack.Children.Add(CreateZaiProviderCard());
+            stack.Children.Add(CreateAugmentProviderCard());
 
             scroll.Content = stack;
             DebugLogger.Log("ProvidersSettingsPage", "CreateContent DONE");
@@ -183,8 +186,15 @@ public class ProvidersSettingsPage : ISettingsPage
 
         toggle.Toggled += (s, e) =>
         {
-            _settings.Settings.SetProviderEnabled(providerId, toggle.IsOn);
-            _settings.Save();
+            try
+            {
+                _settings.Settings.SetProviderEnabled(providerId, toggle.IsOn);
+                _settings.Save();
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.LogError("ProvidersSettingsPage", $"Toggle error for {providerId}", ex);
+            }
         };
         Grid.SetColumn(toggle, 2);
 
@@ -798,28 +808,62 @@ public class ProvidersSettingsPage : ISettingsPage
         saveButton.Click += async (s, e) =>
         {
             var token = string.IsNullOrWhiteSpace(tokenBox.Password) ? null : tokenBox.Password;
-            var success = ZaiSettingsReader.StoreApiToken(token);
 
-            if (_content?.XamlRoot != null)
+            // Show saving state
+            saveButton.IsEnabled = false;
+            saveButton.Content = "Saving...";
+
+            try
             {
-                var dialog = new ContentDialog
-                {
-                    Title = success ? "z.ai Token Saved" : "Error",
-                    Content = success
-                        ? (string.IsNullOrWhiteSpace(token)
-                            ? "API token cleared from secure storage."
-                            : "API token saved securely to Windows Credential Manager.")
-                        : "Failed to save token.",
-                    CloseButtonText = "OK",
-                    XamlRoot = _content.XamlRoot
-                };
-                await dialog.ShowAsync();
-            }
+                var success = ZaiSettingsReader.StoreApiToken(token);
 
-            tokenBox.Password = "";
-            tokenBox.PasswordRevealMode = PasswordRevealMode.Hidden;
-            toggleRevealButton.Content = "Show";
-            RequestRefresh?.Invoke();
+                if (_content?.XamlRoot != null)
+                {
+                    string title, message;
+                    if (!success)
+                    {
+                        title = "Error";
+                        message = "Failed to save token to Windows Credential Manager.";
+                    }
+                    else if (string.IsNullOrWhiteSpace(token))
+                    {
+                        title = "Token Cleared";
+                        message = "API token removed from secure storage.";
+                    }
+                    else
+                    {
+                        title = "✓ Token Saved Successfully";
+                        message = "Your z.ai API token has been saved securely.\n\nUsage data will be refreshed automatically.";
+                    }
+
+                    var dialog = new ContentDialog
+                    {
+                        Title = title,
+                        Content = message,
+                        CloseButtonText = "OK",
+                        XamlRoot = _content.XamlRoot
+                    };
+                    await dialog.ShowAsync();
+                }
+
+                tokenBox.Password = "";
+                tokenBox.PasswordRevealMode = PasswordRevealMode.Hidden;
+                toggleRevealButton.Content = "Show";
+
+                // Trigger data refresh
+                var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+                if (usageStore != null && !string.IsNullOrWhiteSpace(token))
+                {
+                    await usageStore.RefreshAsync("zai");
+                }
+
+                RequestRefresh?.Invoke();
+            }
+            finally
+            {
+                saveButton.IsEnabled = true;
+                saveButton.Content = "Save";
+            }
         };
 
         var openLink = new HyperlinkButton
@@ -872,15 +916,21 @@ public class ProvidersSettingsPage : ISettingsPage
                 break;
 
             case "cursor":
-                var cursorSvgPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icons", "cursor-white.svg");
+                // In dark mode: use black SVG on light background
+                // In light mode: use white SVG on black background
+                var cursorSvgFile = isDark ? "cursor.svg" : "cursor-white.svg";
+                var cursorSvgPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icons", cursorSvgFile);
                 if (System.IO.File.Exists(cursorSvgPath))
                 {
+                    var cursorBgColor = isDark
+                        ? Windows.UI.Color.FromArgb(255, 240, 240, 240) // Light gray for dark mode
+                        : Colors.Black; // Black for light mode
                     var cursorBorder = new Border
                     {
                         Width = 36,
                         Height = 36,
                         CornerRadius = new CornerRadius(8),
-                        Background = new SolidColorBrush(Colors.Black),
+                        Background = new SolidColorBrush(cursorBgColor),
                         Padding = new Thickness(6)
                     };
                     cursorBorder.Child = new Image
@@ -1011,6 +1061,228 @@ public class ProvidersSettingsPage : ISettingsPage
     /// </summary>
     public void Refresh()
     {
-        _content = CreateContent();
+        try
+        {
+            DebugLogger.Log("ProvidersSettingsPage", "Refresh START");
+            _content = CreateContent();
+            DebugLogger.Log("ProvidersSettingsPage", "Refresh DONE");
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("ProvidersSettingsPage", "Refresh CRASHED", ex);
+        }
+    }
+
+    private Border CreateAugmentProviderCard()
+    {
+        var hasCookie = AugmentCredentialStore.HasCredentials();
+
+        var card = new Border
+        {
+            Background = new SolidColorBrush(_theme.CardColor),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(16, 14, 16, 14),
+            Margin = new Thickness(0, 0, 0, 6),
+            BorderBrush = new SolidColorBrush(_theme.BorderColor),
+            BorderThickness = new Thickness(1)
+        };
+
+        var mainStack = new StackPanel { Spacing = 12 };
+
+        // Header row
+        var headerGrid = new Grid();
+        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var iconBorder = new Border
+        {
+            Width = 36,
+            Height = 36,
+            CornerRadius = new CornerRadius(8),
+            Background = new SolidColorBrush(ProviderIconHelper.ParseColor("#6366F1"))
+        };
+        iconBorder.Child = new TextBlock
+        {
+            Text = "A",
+            FontSize = 16,
+            FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+            Foreground = new SolidColorBrush(Colors.White),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        Grid.SetColumn(iconBorder, 0);
+
+        var infoStack = new StackPanel
+        {
+            Margin = new Thickness(12, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        infoStack.Children.Add(new TextBlock
+        {
+            Text = "Augment",
+            FontSize = 14,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+        });
+
+        var statusStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        statusStack.Children.Add(new Ellipse
+        {
+            Width = 8,
+            Height = 8,
+            Fill = new SolidColorBrush(hasCookie ? _theme.SuccessColor : _theme.SecondaryTextColor)
+        });
+        statusStack.Children.Add(new TextBlock
+        {
+            Text = hasCookie ? "Session cookie configured" : "Not configured",
+            FontSize = 12,
+            Foreground = new SolidColorBrush(_theme.SecondaryTextColor)
+        });
+        infoStack.Children.Add(statusStack);
+        Grid.SetColumn(infoStack, 1);
+
+        headerGrid.Children.Add(iconBorder);
+        headerGrid.Children.Add(infoStack);
+        mainStack.Children.Add(headerGrid);
+
+        // Cookie input section
+        var cookieSection = new StackPanel { Spacing = 10 };
+
+        var cookieBox = new PasswordBox
+        {
+            PlaceholderText = hasCookie ? "Cookie saved - paste new to replace" : "Paste your Augment session cookie",
+            Height = 32,
+            MinWidth = 360
+        };
+
+        var toggleRevealButton = new Button
+        {
+            Content = "Show",
+            Margin = new Thickness(8, 0, 0, 0),
+            Height = 32
+        };
+        toggleRevealButton.Click += (s, e) =>
+        {
+            var isHidden = cookieBox.PasswordRevealMode != PasswordRevealMode.Visible;
+            cookieBox.PasswordRevealMode = isHidden ? PasswordRevealMode.Visible : PasswordRevealMode.Hidden;
+            toggleRevealButton.Content = isHidden ? "Hide" : "Show";
+        };
+
+        var cookieRow = new Grid();
+        cookieRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        cookieRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(cookieBox, 0);
+        Grid.SetColumn(toggleRevealButton, 1);
+        cookieRow.Children.Add(cookieBox);
+        cookieRow.Children.Add(toggleRevealButton);
+        cookieSection.Children.Add(cookieRow);
+
+        // Actions row
+        var actionsRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+
+        var pasteButton = new Button { Content = "Paste", Height = 30 };
+        pasteButton.Click += async (s, e) =>
+        {
+            try
+            {
+                var data = Clipboard.GetContent();
+                if (data.Contains(StandardDataFormats.Text))
+                {
+                    var text = await data.GetTextAsync();
+                    if (!string.IsNullOrWhiteSpace(text))
+                        cookieBox.Password = text.Trim();
+                }
+            }
+            catch { }
+        };
+
+        var saveButton = new Button
+        {
+            Content = "Save",
+            Padding = new Thickness(16, 4, 16, 4),
+            Background = new SolidColorBrush(_theme.AccentColor),
+            Foreground = new SolidColorBrush(Colors.White),
+            Height = 30
+        };
+        saveButton.Click += async (s, e) =>
+        {
+            var cookie = string.IsNullOrWhiteSpace(cookieBox.Password) ? null : cookieBox.Password;
+
+            saveButton.IsEnabled = false;
+            saveButton.Content = "Saving...";
+
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(cookie))
+                {
+                    AugmentCredentialStore.StoreCookieHeader(cookie);
+                }
+                else
+                {
+                    AugmentCredentialStore.ClearCredentials();
+                }
+
+                if (_content?.XamlRoot != null)
+                {
+                    var title = string.IsNullOrWhiteSpace(cookie) ? "Cookie Cleared" : "✓ Cookie Saved Successfully";
+                    var message = string.IsNullOrWhiteSpace(cookie)
+                        ? "Session cookie removed from secure storage."
+                        : "Your Augment session cookie has been saved securely.\n\nUsage data will be refreshed automatically.";
+
+                    var dialog = new ContentDialog
+                    {
+                        Title = title,
+                        Content = message,
+                        CloseButtonText = "OK",
+                        XamlRoot = _content.XamlRoot
+                    };
+                    await dialog.ShowAsync();
+                }
+
+                cookieBox.Password = "";
+                cookieBox.PasswordRevealMode = PasswordRevealMode.Hidden;
+                toggleRevealButton.Content = "Show";
+
+                // Trigger data refresh
+                var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+                if (usageStore != null && !string.IsNullOrWhiteSpace(cookie))
+                {
+                    await usageStore.RefreshAsync("augment");
+                }
+
+                RequestRefresh?.Invoke();
+            }
+            finally
+            {
+                saveButton.IsEnabled = true;
+                saveButton.Content = "Save";
+            }
+        };
+
+        var openLink = new HyperlinkButton
+        {
+            Content = "Get cookie (login first)",
+            NavigateUri = new Uri("https://app.augmentcode.com"),
+            FontSize = 12,
+            Foreground = new SolidColorBrush(_theme.SecondaryTextColor)
+        };
+
+        actionsRow.Children.Add(pasteButton);
+        actionsRow.Children.Add(saveButton);
+        actionsRow.Children.Add(openLink);
+        cookieSection.Children.Add(actionsRow);
+
+        cookieSection.Children.Add(new TextBlock
+        {
+            Text = "Cookie is stored securely in Windows Credential Manager. Use browser dev tools to copy the 'Cookie' header from app.augmentcode.com requests.",
+            FontSize = 11,
+            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
+            TextWrapping = TextWrapping.Wrap,
+            Opacity = 0.7
+        });
+
+        mainStack.Children.Add(cookieSection);
+        card.Child = mainStack;
+
+        return card;
     }
 }

@@ -30,6 +30,9 @@ public sealed class SettingsWindow : Window
     private string _currentPage = "General";
     private readonly string? _initialPage;
 
+    // Custom titlebar element (drag region)
+    private Grid _titleBarGrid = null!;
+
     // Page instances (lazy-loaded)
     private GeneralSettingsPage? _generalPage;
     private ProvidersSettingsPage? _providersPage;
@@ -87,6 +90,9 @@ public sealed class SettingsWindow : Window
             }
             if (_contentFrame != null) _contentFrame.RequestedTheme = theme;
 
+            // Update titlebar button colors for theme
+            UpdateTitleBarColors();
+
             _generalPage?.OnThemeChanged();
             _providersPage?.OnThemeChanged();
             _appearancePage?.OnThemeChanged();
@@ -97,6 +103,31 @@ public sealed class SettingsWindow : Window
             UpdateMenuColors();
         }
         catch { }
+    }
+
+    private void UpdateTitleBarColors()
+    {
+        if (!AppWindowTitleBar.IsCustomizationSupported()) return;
+
+        var titleBar = _appWindow.TitleBar;
+        if (_theme.IsDarkMode)
+        {
+            titleBar.ButtonForegroundColor = Colors.White;
+            titleBar.ButtonInactiveForegroundColor = Windows.UI.Color.FromArgb(128, 255, 255, 255);
+            titleBar.ButtonHoverBackgroundColor = Windows.UI.Color.FromArgb(25, 255, 255, 255);
+            titleBar.ButtonHoverForegroundColor = Colors.White;
+            titleBar.ButtonPressedBackgroundColor = Windows.UI.Color.FromArgb(40, 255, 255, 255);
+            titleBar.ButtonPressedForegroundColor = Colors.White;
+        }
+        else
+        {
+            titleBar.ButtonForegroundColor = Colors.Black;
+            titleBar.ButtonInactiveForegroundColor = Windows.UI.Color.FromArgb(128, 0, 0, 0);
+            titleBar.ButtonHoverBackgroundColor = Windows.UI.Color.FromArgb(25, 0, 0, 0);
+            titleBar.ButtonHoverForegroundColor = Colors.Black;
+            titleBar.ButtonPressedBackgroundColor = Windows.UI.Color.FromArgb(40, 0, 0, 0);
+            titleBar.ButtonPressedForegroundColor = Colors.Black;
+        }
     }
 
     private void UpdateMenuColors()
@@ -142,18 +173,7 @@ public sealed class SettingsWindow : Window
     {
         _rootGrid = new Grid { RequestedTheme = _theme.CurrentTheme };
 
-        // NOTE: Adding XamlControlsResources can crash in unpackaged WinUI 3 apps
-        // (missing AcrylicBackgroundFillColorDefaultBrush). We avoid it to keep
-        // Settings stable.
-        // App.xaml.cs already documents this for the app root.
-        //
-        // If we later move to packaged/MSIX, we can reconsider enabling it here.
-        //
-        // _rootGrid.Resources.MergedDictionaries.Add(new XamlControlsResources());
-
-        // Extra defense: some WinUI components may try to resolve Acrylic brushes
-        // even when we don't explicitly use XamlControlsResources.
-        // Provide a safe fallback so missing resources don't crash the Settings window.
+        // Extra defense for missing resources
         try
         {
             if (!_rootGrid.Resources.ContainsKey("AcrylicBackgroundFillColorDefaultBrush"))
@@ -162,93 +182,24 @@ public sealed class SettingsWindow : Window
             }
         }
         catch { }
- 
-        // Two columns: Sidebar (240px) + Content (*)
-        _rootGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(240) });
-        _rootGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        // === LEFT SIDEBAR (includes titlebar area) ===
-        _sidebarBorder = new Border
+        // Two rows: Titlebar (32px) + Content (*)
+        _rootGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(32) });
+        _rootGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+        // === TITLEBAR ROW (spans full width) ===
+        _titleBarGrid = new Grid { Height = 32 };
+        _titleBarGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(240) }); // Sidebar width
+        _titleBarGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        // Sidebar titlebar area with icon and title
+        var sidebarTitleArea = new Grid
         {
-            Background = new SolidColorBrush(_theme.SurfaceColor),
-            RequestedTheme = _theme.CurrentTheme
+            Background = new SolidColorBrush(_theme.SurfaceColor)
         };
+        sidebarTitleArea.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        sidebarTitleArea.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var sidebarStack = new StackPanel();
-
-        // Titlebar area in sidebar (48px height for custom titlebar)
-        var titleBarArea = CreateSidebarTitleBar();
-        sidebarStack.Children.Add(titleBarArea);
-
-        // Menu items with padding
-        _menuPanel = new StackPanel 
-        { 
-            Spacing = 2,
-            Margin = new Thickness(12, 8, 12, 12)
-        };
-
-        _menuPanel.Children.Add(CreateMenuItem("General", "\uE713", true));
-        _menuPanel.Children.Add(CreateMenuItem("Providers", "\uE774", false));
-        _menuPanel.Children.Add(CreateMenuItem("Appearance", "\uE790", false));
-        _menuPanel.Children.Add(CreateMenuItem("Notifications", "\uEA8F", false));
-        _menuPanel.Children.Add(CreateMenuItem("About", "\uE946", false));
-
-        sidebarStack.Children.Add(_menuPanel);
-        _sidebarBorder.Child = sidebarStack;
-        Grid.SetColumn(_sidebarBorder, 0);
-
-        // === RIGHT CONTENT AREA ===
-        var contentBorder = new Border
-        {
-            // Subtle separator line on left
-            BorderBrush = new SolidColorBrush(_theme.BorderColor),
-            BorderThickness = new Thickness(1, 0, 0, 0)
-        };
-
-        // Use Frame for built-in navigation transitions
-        _contentFrame = new Frame
-        {
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Stretch,
-            RequestedTheme = _theme.CurrentTheme
-        };
-
-        // Wrap content in a ContentControl for manual content switching with animation
-        var contentControl = new ContentControl
-        {
-            HorizontalContentAlignment = HorizontalAlignment.Stretch,
-            VerticalContentAlignment = VerticalAlignment.Stretch,
-            RequestedTheme = _theme.CurrentTheme
-        };
-        
-        contentBorder.Child = _contentFrame;
-        Grid.SetColumn(contentBorder, 1);
-
-        // Show initial page
-        var startPage = _initialPage ?? "General";
-        _currentPage = startPage;
-        ShowPage(startPage, useTransition: false);
-        UpdateMenuSelection(startPage);
-
-        _rootGrid.Children.Add(_sidebarBorder);
-        _rootGrid.Children.Add(contentBorder);
-
-        Content = _rootGrid;
-    }
-
-    private Grid CreateSidebarTitleBar()
-    {
-        var titleBarGrid = new Grid
-        {
-            Height = 48,
-            Margin = new Thickness(16, 0, 0, 8)
-        };
-
-        titleBarGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        titleBarGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        titleBarGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-        // App icon - use new LOGO-32.png or LOGO-24.png
         FrameworkElement iconElement;
         try
         {
@@ -260,8 +211,9 @@ public sealed class SettingsWindow : Window
             {
                 iconElement = new Image
                 {
-                    Width = 18,
-                    Height = 18,
+                    Width = 16,
+                    Height = 16,
+                    Margin = new Thickness(13, 0, 0, 0),
                     Source = new BitmapImage(new Uri(logoPath, UriKind.Absolute)),
                     VerticalAlignment = VerticalAlignment.Center
                 };
@@ -271,7 +223,8 @@ public sealed class SettingsWindow : Window
                 iconElement = new FontIcon
                 {
                     Glyph = "\uE9D9",
-                    FontSize = 16,
+                    FontSize = 14,
+                    Margin = new Thickness(13, 0, 0, 0),
                     Foreground = new SolidColorBrush(_theme.AccentColor),
                     VerticalAlignment = VerticalAlignment.Center
                 };
@@ -282,7 +235,8 @@ public sealed class SettingsWindow : Window
             iconElement = new FontIcon
             {
                 Glyph = "\uE9D9",
-                FontSize = 16,
+                FontSize = 14,
+                Margin = new Thickness(13, 0, 0, 0),
                 Foreground = new SolidColorBrush(_theme.AccentColor),
                 VerticalAlignment = VerticalAlignment.Center
             };
@@ -292,18 +246,84 @@ public sealed class SettingsWindow : Window
         var titleText = new TextBlock
         {
             Text = "Settings",
-            FontSize = 14,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.Normal,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(10, 0, 0, 0),
+            Margin = new Thickness(8, 0, 0, 0),
             Foreground = new SolidColorBrush(_theme.TextColor)
         };
         Grid.SetColumn(titleText, 1);
 
-        titleBarGrid.Children.Add(iconElement);
-        titleBarGrid.Children.Add(titleText);
+        sidebarTitleArea.Children.Add(iconElement);
+        sidebarTitleArea.Children.Add(titleText);
+        Grid.SetColumn(sidebarTitleArea, 0);
 
-        return titleBarGrid;
+        // Content titlebar area (transparent for window buttons)
+        var contentTitleArea = new Border { Background = new SolidColorBrush(Colors.Transparent) };
+        Grid.SetColumn(contentTitleArea, 1);
+
+        _titleBarGrid.Children.Add(sidebarTitleArea);
+        _titleBarGrid.Children.Add(contentTitleArea);
+        Grid.SetRow(_titleBarGrid, 0);
+
+        // === CONTENT ROW (Sidebar + Content) ===
+        var contentRow = new Grid();
+        contentRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(240) });
+        contentRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        // Left sidebar (menu items only)
+        _sidebarBorder = new Border
+        {
+            Background = new SolidColorBrush(_theme.SurfaceColor),
+            RequestedTheme = _theme.CurrentTheme
+        };
+
+        _menuPanel = new StackPanel
+        {
+            Spacing = 2,
+            Margin = new Thickness(12, 8, 12, 12)
+        };
+
+        _menuPanel.Children.Add(CreateMenuItem("General", "\uE713", true));
+        _menuPanel.Children.Add(CreateMenuItem("Providers", "\uE774", false));
+        _menuPanel.Children.Add(CreateMenuItem("Appearance", "\uE790", false));
+        _menuPanel.Children.Add(CreateMenuItem("Notifications", "\uEA8F", false));
+        _menuPanel.Children.Add(CreateMenuItem("About", "\uE946", false));
+
+        _sidebarBorder.Child = _menuPanel;
+        Grid.SetColumn(_sidebarBorder, 0);
+
+        // Right content area
+        var contentBorder = new Border
+        {
+            BorderBrush = new SolidColorBrush(_theme.BorderColor),
+            BorderThickness = new Thickness(1, 0, 0, 0)
+        };
+
+        _contentFrame = new Frame
+        {
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            RequestedTheme = _theme.CurrentTheme
+        };
+
+        contentBorder.Child = _contentFrame;
+        Grid.SetColumn(contentBorder, 1);
+
+        contentRow.Children.Add(_sidebarBorder);
+        contentRow.Children.Add(contentBorder);
+        Grid.SetRow(contentRow, 1);
+
+        // Show initial page
+        var startPage = _initialPage ?? "General";
+        _currentPage = startPage;
+        ShowPage(startPage, useTransition: false);
+        UpdateMenuSelection(startPage);
+
+        _rootGrid.Children.Add(_titleBarGrid);
+        _rootGrid.Children.Add(contentRow);
+
+        Content = _rootGrid;
     }
 
     private Border CreateMenuItem(string name, string glyph, bool isSelected)
@@ -557,22 +577,34 @@ public sealed class SettingsWindow : Window
         {
             var titleBar = _appWindow.TitleBar;
             titleBar.ExtendsContentIntoTitleBar = true;
-            titleBar.PreferredHeightOption = TitleBarHeightOption.Tall;
+            titleBar.PreferredHeightOption = TitleBarHeightOption.Standard; // 32px
+
+            // Transparent buttons that blend with content
             titleBar.ButtonBackgroundColor = Colors.Transparent;
             titleBar.ButtonInactiveBackgroundColor = Colors.Transparent;
 
+            // Theme-aware button colors
             if (_theme.IsDarkMode)
             {
                 titleBar.ButtonForegroundColor = Colors.White;
-                titleBar.ButtonHoverBackgroundColor = Windows.UI.Color.FromArgb(30, 255, 255, 255);
-                titleBar.ButtonPressedBackgroundColor = Windows.UI.Color.FromArgb(50, 255, 255, 255);
+                titleBar.ButtonInactiveForegroundColor = Windows.UI.Color.FromArgb(128, 255, 255, 255);
+                titleBar.ButtonHoverBackgroundColor = Windows.UI.Color.FromArgb(25, 255, 255, 255);
+                titleBar.ButtonHoverForegroundColor = Colors.White;
+                titleBar.ButtonPressedBackgroundColor = Windows.UI.Color.FromArgb(40, 255, 255, 255);
+                titleBar.ButtonPressedForegroundColor = Colors.White;
             }
             else
             {
                 titleBar.ButtonForegroundColor = Colors.Black;
-                titleBar.ButtonHoverBackgroundColor = Windows.UI.Color.FromArgb(30, 0, 0, 0);
-                titleBar.ButtonPressedBackgroundColor = Windows.UI.Color.FromArgb(50, 0, 0, 0);
+                titleBar.ButtonInactiveForegroundColor = Windows.UI.Color.FromArgb(128, 0, 0, 0);
+                titleBar.ButtonHoverBackgroundColor = Windows.UI.Color.FromArgb(25, 0, 0, 0);
+                titleBar.ButtonHoverForegroundColor = Colors.Black;
+                titleBar.ButtonPressedBackgroundColor = Windows.UI.Color.FromArgb(40, 0, 0, 0);
+                titleBar.ButtonPressedForegroundColor = Colors.Black;
             }
+
+            // Set the drag region to be the entire titlebar area
+            SetTitleBar(_titleBarGrid);
         }
     }
 }

@@ -55,7 +55,15 @@ public class SettingsService
             var json = JsonSerializer.Serialize(Settings, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(SettingsPath, json);
 
-            SettingsChanged?.Invoke();
+            // Fire event in a safe manner
+            try
+            {
+                SettingsChanged?.Invoke();
+            }
+            catch (Exception eventEx)
+            {
+                DebugLogger.LogError("SettingsService", "SettingsChanged event error", eventEx);
+            }
         }
         catch (Exception ex)
         {

@@ -31,6 +31,7 @@ public sealed class TrayPopupWindow : Window
     private readonly UsageStore _usageStore;
     private bool _isPinned;
     private bool _isDarkMode;
+    private bool _isInitialized;
 
     // Appearance settings (read from SettingsService)
     private bool IsCompactMode => SettingsService.Instance.Settings.CompactMode;
@@ -160,16 +161,21 @@ public sealed class TrayPopupWindow : Window
 
         Activated += OnWindowActivated;
 
+        _isInitialized = true;
         DebugLogger.Log("TrayPopup", $"TrayPopupWindow created (CodexBar style, DarkMode={_isDarkMode})");
     }
 
     private void OnSettingsChanged()
     {
+        // Guard: ensure popup is initialized
+        if (!_isInitialized) return;
+
         // Rebuild UI on settings change (provider toggles, etc.)
         try
         {
             DispatcherQueue?.TryEnqueue(() =>
             {
+                if (!_isInitialized) return;
                 try
                 {
                     DebugLogger.Log("TrayPopup", "Settings changed - rebuilding UI");
@@ -191,11 +197,15 @@ public sealed class TrayPopupWindow : Window
 
     private void OnThemeChanged(ElementTheme theme)
     {
+        // Guard: ensure popup is initialized
+        if (!_isInitialized) return;
+
         // Update theme on UI thread
         try
         {
             DispatcherQueue?.TryEnqueue(() =>
             {
+                if (!_isInitialized) return;
                 try
                 {
                     _isDarkMode = theme == ElementTheme.Dark;
@@ -596,6 +606,7 @@ public sealed class TrayPopupWindow : Window
             "droid" => Windows.UI.Color.FromArgb(255, 238, 96, 24),     // #EE6018
             "zai" => Windows.UI.Color.FromArgb(255, 232, 90, 106),      // #E85A6A
             "minimax" => Windows.UI.Color.FromArgb(255, 226, 22, 126),   // #E2167E
+            "augment" => Windows.UI.Color.FromArgb(255, 99, 102, 241),   // #6366F1 (Indigo)
             _ => Windows.UI.Color.FromArgb(255, 100, 100, 100)
         };
     }
@@ -614,6 +625,7 @@ public sealed class TrayPopupWindow : Window
             "droid" => "#EE6018",
             "zai" => "#E85A6A",
             "minimax" => "#E2167E",
+            "augment" => "#6366F1",
             _ => "#646464"
         };
     }
@@ -632,6 +644,27 @@ public sealed class TrayPopupWindow : Window
     }
 
     private Windows.UI.Color GetProviderStatusColor(string providerId)
+    {
+        // First check for real incidents from ProviderStatusService
+        var statusSnapshot = ProviderStatusService.Instance.GetStatus(providerId);
+        if (statusSnapshot != null)
+        {
+            return statusSnapshot.Level switch
+            {
+                ProviderStatusLevel.MajorOutage => Windows.UI.Color.FromArgb(255, 220, 53, 69),   // Red - major outage
+                ProviderStatusLevel.PartialOutage => Windows.UI.Color.FromArgb(255, 255, 87, 34), // Orange - partial outage
+                ProviderStatusLevel.Degraded => Windows.UI.Color.FromArgb(255, 255, 193, 7),      // Yellow - degraded performance
+                ProviderStatusLevel.Maintenance => Windows.UI.Color.FromArgb(255, 66, 165, 245),  // Blue - maintenance
+                ProviderStatusLevel.Operational => GetUsageBasedStatusColor(providerId),           // Use usage-based color
+                _ => GetUsageBasedStatusColor(providerId)
+            };
+        }
+        
+        // Fallback to usage-based status
+        return GetUsageBasedStatusColor(providerId);
+    }
+
+    private Windows.UI.Color GetUsageBasedStatusColor(string providerId)
     {
         var snapshot = _usageStore.GetSnapshot(providerId);
         if (snapshot == null || snapshot.ErrorMessage != null)
@@ -800,6 +833,7 @@ public sealed class TrayPopupWindow : Window
             "codex" => _isDarkMode ? Colors.White : Windows.UI.Color.FromArgb(255, 0, 0, 0),
             "copilot" => _isDarkMode ? Colors.White : Windows.UI.Color.FromArgb(255, 36, 41, 47),
             "zai" => _isDarkMode ? Colors.White : Windows.UI.Color.FromArgb(255, 0, 0, 0),
+            "augment" => Windows.UI.Color.FromArgb(255, 99, 102, 241),        // #6366F1 Indigo
 
             // Brand colors that work in both modes
             "minimax" => Windows.UI.Color.FromArgb(255, 226, 22, 126),        // #E2167E Pink (gradient start)
@@ -1186,12 +1220,20 @@ public sealed class TrayPopupWindow : Window
             "antigravity" => null, // Local-only provider, no web dashboard
             "zai" => "https://z.ai/manage-apikey/subscription",
             "minimax" => "https://platform.minimax.io",
+            "augment" => "https://app.augmentcode.com/account/subscription",
             _ => null
         };
     }
 
     private string? GetStatusPageUrl(string providerId)
     {
+        // First try to get from ProviderStatusService (has live polling)
+        var statusService = ProviderStatusService.Instance;
+        var statusUrl = statusService.GetStatusPageUrl(providerId);
+        if (!string.IsNullOrEmpty(statusUrl))
+            return statusUrl;
+            
+        // Fallback to static mapping
         return providerId.ToLower() switch
         {
             "claude" => "https://status.anthropic.com/",
@@ -1203,6 +1245,7 @@ public sealed class TrayPopupWindow : Window
             "antigravity" => null, // Local-only provider, no status page
             "zai" => null,
             "minimax" => null,
+            "augment" => "https://status.augmentcode.com/",
             _ => null
         };
     }
