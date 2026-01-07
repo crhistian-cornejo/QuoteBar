@@ -673,10 +673,10 @@ public sealed class TrayPopupWindow : Window
             // Brand colors - always use brand color (visible in both modes)
             "claude" => Windows.UI.Color.FromArgb(255, 217, 119, 87),       // #D97757 Orange
             "gemini" => Windows.UI.Color.FromArgb(255, 66, 133, 244),       // #4285F4 Blue
-            "antigravity" => Windows.UI.Color.FromArgb(255, 255, 107, 107), // #FF6B6B Red
             "droid" => Windows.UI.Color.FromArgb(255, 238, 96, 24),         // #EE6018 Orange
             
-            // Dark icons - switch to white in dark mode
+            // Dark icons - switch to white in dark mode (original SVG is white/black)
+            "antigravity" => _isDarkMode ? Colors.White : Windows.UI.Color.FromArgb(255, 0, 0, 0), // White/Black
             "cursor" => _isDarkMode ? Colors.White : Windows.UI.Color.FromArgb(255, 0, 0, 0),
             "codex" => _isDarkMode ? Colors.White : Windows.UI.Color.FromArgb(255, 0, 0, 0),
             "copilot" => _isDarkMode ? Colors.White : Windows.UI.Color.FromArgb(255, 36, 41, 47),
@@ -693,6 +693,34 @@ public sealed class TrayPopupWindow : Window
         _usageStore.CurrentProviderId = providerId;
         UpdateTabStyles();
         UpdateUI();
+        ResizePopupToFit(); // Adjust height based on new provider's data
+    }
+
+    /// <summary>
+    /// Resize popup to fit current content (based on provider's usage sections)
+    /// </summary>
+    private void ResizePopupToFit()
+    {
+        try
+        {
+            var newHeight = CalculatePopupHeight();
+            var currentSize = _appWindow.Size;
+            
+            // Only resize if height changed significantly (avoid flicker)
+            if (Math.Abs(currentSize.Height - newHeight) > 20)
+            {
+                // Keep current X position, adjust Y to grow upward
+                var currentPos = _appWindow.Position;
+                var heightDiff = newHeight - currentSize.Height;
+                var newY = currentPos.Y - heightDiff;
+                
+                _appWindow.MoveAndResize(new RectInt32(currentPos.X, newY, currentSize.Width, newHeight));
+            }
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("TrayPopup", "ResizePopupToFit error", ex);
+        }
     }
 
     private void UpdateTabStyles()
@@ -1165,31 +1193,50 @@ public sealed class TrayPopupWindow : Window
     }
 
     /// <summary>
-    /// Calculate popup height based on number of enabled providers and CompactMode setting
-    /// Compact mode uses reduced base height and smaller row heights
+    /// Calculate popup height based on number of enabled providers and actual usage sections
+    /// Height adapts dynamically to the current provider's data
     /// </summary>
     private int CalculatePopupHeight()
     {
-        // Apply CompactMode sizing
-        int baseHeight = IsCompactMode ? 420 : 540;   // Reduced base height for compact mode
-        int rowHeight = IsCompactMode ? 28 : 36;       // Height per additional row
-        const int baseRows = 2;                        // Default rows for baseHeight
+        // Minimal base height: tabs, header, footer (without usage sections)
+        int baseHeight = IsCompactMode ? 380 : 460;
+        int tabRowHeight = IsCompactMode ? 28 : 36;
+        int usageSectionHeight = IsCompactMode ? 55 : 70;
+        const int baseTabRows = 2;
 
-        // Get enabled provider count
+        // Get enabled provider count for tab rows
         var allProviders = ProviderRegistry.Instance.GetAllProviders().ToList();
         var enabledCount = allProviders.Count(p => SettingsService.Instance.Settings.IsProviderEnabled(p.Id));
         
-        // If none enabled, use all
         if (enabledCount == 0)
             enabledCount = allProviders.Count;
 
-        // Calculate rows needed
+        // Calculate extra tab rows
         int rowCount = (int)Math.Ceiling((double)enabledCount / MaxTabsPerRow);
+        int extraTabRows = Math.Max(0, rowCount - baseTabRows);
 
-        // Add extra height for rows beyond base
-        int extraRows = Math.Max(0, rowCount - baseRows);
-        
-        return baseHeight + (extraRows * rowHeight);
+        // Get actual usage section count from current provider's snapshot
+        int usageSectionCount = GetCurrentProviderUsageSectionCount();
+
+        return baseHeight + (extraTabRows * tabRowHeight) + (usageSectionCount * usageSectionHeight);
+    }
+
+    /// <summary>
+    /// Count actual usage sections for the currently selected provider
+    /// </summary>
+    private int GetCurrentProviderUsageSectionCount()
+    {
+        var snapshot = _usageStore.GetSnapshot(_selectedProviderId);
+        if (snapshot == null || snapshot.ErrorMessage != null)
+            return 1; // Show at least 1 section for error/no data
+
+        int count = 0;
+        if (snapshot.Primary != null) count++;
+        if (snapshot.Secondary != null) count++;
+        if (snapshot.Tertiary != null) count++;
+        if (snapshot.Cost != null) count++;
+
+        return Math.Max(1, count); // At least 1 section
     }
 
     public void ShowPopup()

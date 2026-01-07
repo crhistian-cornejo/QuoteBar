@@ -120,18 +120,54 @@ public sealed class GeminiUsageData
     public GeminiQuotaBucket? MostConstrainedFlashModel { get; set; }
 
     /// <summary>
-    /// Detected plan type based on tier
+    /// Detected plan type based on tier - uses display name if available
     /// </summary>
     public string PlanType
     {
         get
         {
-            return TierId?.ToLowerInvariant() switch
+            // First try to use the display name from API (most accurate)
+            if (!string.IsNullOrEmpty(TierDisplayName))
             {
-                "free-tier" => "Free",
-                "standard-tier" => "Paid",
-                "legacy-tier" => "Legacy",
-                _ => "Unknown"
+                var display = TierDisplayName.Trim();
+                // Common display names from API
+                if (display.Contains("Pro", StringComparison.OrdinalIgnoreCase) ||
+                    display.Contains("Paid", StringComparison.OrdinalIgnoreCase) ||
+                    display.Contains("Standard", StringComparison.OrdinalIgnoreCase) ||
+                    display.Contains("Premium", StringComparison.OrdinalIgnoreCase))
+                {
+                    return "Pro";
+                }
+                if (display.Contains("Free", StringComparison.OrdinalIgnoreCase))
+                {
+                    return "Free";
+                }
+                // Return the display name directly if it's short and descriptive
+                if (display.Length <= 20)
+                {
+                    return display;
+                }
+            }
+
+            // Fallback to TierId based detection
+            var tierId = TierId?.ToLowerInvariant() ?? "";
+            
+            return tierId switch
+            {
+                // Known tier IDs
+                "free-tier" or "free_tier" or "free" => "Free",
+                "standard-tier" or "standard_tier" or "standard" or "paid" => "Pro",
+                "pro-tier" or "pro_tier" or "pro" => "Pro",
+                "legacy-tier" or "legacy_tier" or "legacy" => "Legacy",
+                "premium-tier" or "premium_tier" or "premium" => "Pro",
+                // Check for patterns
+                var id when id.Contains("pro") => "Pro",
+                var id when id.Contains("paid") => "Pro",
+                var id when id.Contains("premium") => "Pro",
+                var id when id.Contains("standard") => "Pro",
+                var id when id.Contains("free") => "Free",
+                // Fallback - if we have quota data, assume configured
+                _ => Buckets.Count > 0 ? "Configured" : "Unknown"
             };
         }
     }

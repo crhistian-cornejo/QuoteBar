@@ -77,11 +77,12 @@
                         TextWrapping="Wrap"/>
                 </StackPanel>
                 
-                <HyperlinkButton 
+                <Button
                     Grid.Column="2"
                     Content="Learn more"
-                    NavigateUri="https://docs.factory.ai/factory-cli/getting-started/overview"
                     Foreground="#58a6ff"
+                    Background="Transparent"
+                    BorderThickness="0"
                     Padding="8,4"
                     VerticalAlignment="Center"/>
             </Grid>
@@ -96,10 +97,14 @@
                 Visibility="Visible"
                 Canvas.ZIndex="10">
                 <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="16">
-                    <ProgressRing IsActive="True" Width="48" Height="48"/>
-                    <TextBlock 
+                    <FontIcon
+                        x:Name="LoadingSpinner"
+                        Glyph="&#xE72C;"
+                        Foreground="#10B981"
+                        FontSize="32"/>
+                    <TextBlock
                         x:Name="LoadingText"
-                        Text="Loading Factory login..." 
+                        Text="Loading Factory login..."
                         Foreground="#8b949e"
                         HorizontalAlignment="Center"/>
                 </StackPanel>

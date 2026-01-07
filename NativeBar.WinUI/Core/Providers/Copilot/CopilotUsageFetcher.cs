@@ -177,7 +177,50 @@ public sealed class CopilotUsageData
 }
 
 /// <summary>
-/// Fetches usage data from the GitHub Copilot API using the billing endpoints
+/// Response from GitHub's internal Copilot API (copilot_internal/user)
+/// This API returns quota snapshots directly with percent_remaining
+/// </summary>
+public sealed class CopilotInternalUserResponse
+{
+    [JsonPropertyName("quota_snapshots")]
+    public CopilotQuotaSnapshots? QuotaSnapshots { get; set; }
+
+    [JsonPropertyName("copilot_plan")]
+    public string? CopilotPlan { get; set; }
+
+    [JsonPropertyName("assigned_date")]
+    public string? AssignedDate { get; set; }
+
+    [JsonPropertyName("quota_reset_date")]
+    public string? QuotaResetDate { get; set; }
+}
+
+public sealed class CopilotQuotaSnapshots
+{
+    [JsonPropertyName("premium_interactions")]
+    public CopilotQuotaSnapshot? PremiumInteractions { get; set; }
+
+    [JsonPropertyName("chat")]
+    public CopilotQuotaSnapshot? Chat { get; set; }
+}
+
+public sealed class CopilotQuotaSnapshot
+{
+    [JsonPropertyName("entitlement")]
+    public double Entitlement { get; set; }
+
+    [JsonPropertyName("remaining")]
+    public double Remaining { get; set; }
+
+    [JsonPropertyName("percent_remaining")]
+    public double PercentRemaining { get; set; }
+
+    [JsonPropertyName("quota_id")]
+    public string? QuotaId { get; set; }
+}
+
+/// <summary>
+/// Fetches usage data from the GitHub Copilot API using both the internal API and billing endpoints
 /// </summary>
 public static class CopilotUsageFetcher
 {
@@ -199,6 +242,261 @@ public static class CopilotUsageFetcher
     {
         PropertyNameCaseInsensitive = true
     };
+
+    /// <summary>
+    /// Fetch usage data using both APIs:
+    /// - Internal API for accurate quota percentages
+    /// - Billing API for model breakdown
+    /// Falls back to billing API only if internal API fails.
+    /// </summary>
+    public static async Task<UsageSnapshot> FetchUsageSnapshotAsync(string accessToken, CancellationToken cancellationToken = default)
+    {
+        UsageSnapshot? internalResult = null;
+        CopilotUsageData? billingData = null;
+
+        // Try internal API first (more reliable for quota percentages)
+        try
+        {
+            internalResult = await FetchFromInternalApiAsync(accessToken, cancellationToken);
+            if (internalResult != null)
+            {
+                Log("Successfully fetched from internal API");
+            }
+        }
+        catch (Exception ex)
+        {
+            Log($"Internal API failed: {ex.Message}");
+        }
+
+        // Always try billing API to get model breakdown
+        try
+        {
+            billingData = await FetchUsageAsync(accessToken, cancellationToken);
+            Log($"Billing API: TopModel={billingData.TopModel}, Models={billingData.ModelUsage.Count}");
+        }
+        catch (Exception ex)
+        {
+            Log($"Billing API failed: {ex.Message}");
+        }
+
+        // If we have internal result, merge in model data from billing
+        if (internalResult != null && billingData != null && billingData.ModelUsage.Count > 0)
+        {
+            return MergeInternalWithBillingData(internalResult, billingData);
+        }
+
+        // If only internal result, return it (no model data)
+        if (internalResult != null)
+        {
+            return internalResult;
+        }
+
+        // Fall back to billing API only
+        if (billingData != null)
+        {
+            return ToUsageSnapshot(billingData, null);
+        }
+
+        // Both failed
+        return new UsageSnapshot
+        {
+            ProviderId = "copilot",
+            ErrorMessage = "Failed to fetch Copilot usage data",
+            FetchedAt = DateTime.UtcNow
+        };
+    }
+
+    /// <summary>
+    /// Merge internal API result with billing API model data
+    /// </summary>
+    private static UsageSnapshot MergeInternalWithBillingData(UsageSnapshot internalResult, CopilotUsageData billingData)
+    {
+        RateWindow? secondary = null;
+        RateWindow? tertiary = null;
+
+        // Get total usage for percentage calculation
+        double totalUsed = billingData.TotalPremiumRequestsUsed;
+
+        // Secondary: Top model
+        if (!string.IsNullOrEmpty(billingData.TopModel) && billingData.TopModelUsage > 0)
+        {
+            double topModelPercent = totalUsed > 0 ? (billingData.TopModelUsage / totalUsed) * 100 : 0;
+
+            secondary = new RateWindow
+            {
+                UsedPercent = topModelPercent,
+                Used = billingData.TopModelUsage,
+                Limit = null,
+                Unit = FormatModelName(billingData.TopModel)
+            };
+        }
+
+        // Tertiary: Second model or billed amount
+        if (billingData.TotalBilledAmount > 0)
+        {
+            tertiary = new RateWindow
+            {
+                UsedPercent = 0,
+                Used = billingData.TotalBilledAmount,
+                Limit = null,
+                Unit = "USD billed"
+            };
+        }
+        else if (billingData.ModelUsage.Count >= 2)
+        {
+            var secondModel = billingData.ModelUsage.OrderByDescending(m => m.Value).Skip(1).First();
+            double secondPercent = totalUsed > 0 ? (secondModel.Value / totalUsed) * 100 : 0;
+
+            tertiary = new RateWindow
+            {
+                UsedPercent = secondPercent,
+                Used = secondModel.Value,
+                Limit = null,
+                Unit = FormatModelName(secondModel.Key)
+            };
+        }
+
+        return new UsageSnapshot
+        {
+            ProviderId = internalResult.ProviderId,
+            Primary = internalResult.Primary,
+            Secondary = secondary ?? internalResult.Secondary,
+            Tertiary = tertiary ?? internalResult.Tertiary,
+            Identity = internalResult.Identity,
+            FetchedAt = internalResult.FetchedAt
+        };
+    }
+
+    /// <summary>
+    /// Fetch from the internal Copilot API (copilot_internal/user)
+    /// This is the same API that VS Code and CodexBar use.
+    /// </summary>
+    private static async Task<UsageSnapshot?> FetchFromInternalApiAsync(string accessToken, CancellationToken cancellationToken)
+    {
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(TimeoutSeconds) };
+        
+        // Use the same headers that VS Code uses
+        client.DefaultRequestHeaders.Add("Authorization", $"token {accessToken}");
+        client.DefaultRequestHeaders.Add("Accept", "application/json");
+        client.DefaultRequestHeaders.Add("Editor-Version", "vscode/1.96.2");
+        client.DefaultRequestHeaders.Add("Editor-Plugin-Version", "copilot-chat/0.26.7");
+        client.DefaultRequestHeaders.Add("User-Agent", "GitHubCopilotChat/0.26.7");
+        client.DefaultRequestHeaders.Add("X-Github-Api-Version", "2025-04-01");
+
+        var url = "https://api.github.com/copilot_internal/user";
+        Log($"Fetching from internal API: {url}");
+
+        var response = await client.GetAsync(url, cancellationToken);
+        var content = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        Log($"Internal API response: Status={response.StatusCode}");
+
+        if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized ||
+            response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+        {
+            Log($"Internal API auth failed: {content}");
+            return null;
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            Log($"Internal API error: {content}");
+            return null;
+        }
+
+        Log($"Internal API body: {content.Substring(0, Math.Min(500, content.Length))}");
+
+        var internalData = JsonSerializer.Deserialize<CopilotInternalUserResponse>(content, JsonOptions);
+        if (internalData == null)
+        {
+            Log("Failed to parse internal API response");
+            return null;
+        }
+
+        return ConvertInternalResponseToSnapshot(internalData);
+    }
+
+    /// <summary>
+    /// Convert internal API response to UsageSnapshot
+    /// </summary>
+    private static UsageSnapshot ConvertInternalResponseToSnapshot(CopilotInternalUserResponse data)
+    {
+        RateWindow? primary = null;
+        RateWindow? secondary = null;
+
+        // Primary: Premium Interactions
+        var premium = data.QuotaSnapshots?.PremiumInteractions;
+        if (premium != null)
+        {
+            // percent_remaining is 0-100, we need used percent
+            var usedPercent = Math.Max(0, 100 - premium.PercentRemaining);
+            var used = premium.Entitlement - premium.Remaining;
+
+            primary = new RateWindow
+            {
+                UsedPercent = usedPercent,
+                Used = used,
+                Limit = (int)premium.Entitlement,
+                WindowMinutes = null,
+                ResetsAt = ParseResetDate(data.QuotaResetDate),
+                ResetDescription = FormatResetTime(ParseResetDate(data.QuotaResetDate)),
+                Unit = "premium"
+            };
+        }
+
+        // Secondary: Chat quota (if different from premium)
+        var chat = data.QuotaSnapshots?.Chat;
+        if (chat != null && chat.QuotaId != premium?.QuotaId)
+        {
+            var usedPercent = Math.Max(0, 100 - chat.PercentRemaining);
+            var used = chat.Entitlement - chat.Remaining;
+
+            secondary = new RateWindow
+            {
+                UsedPercent = usedPercent,
+                Used = used,
+                Limit = (int)chat.Entitlement,
+                Unit = "chat"
+            };
+        }
+
+        // Determine plan type from copilot_plan field
+        var planLabel = data.CopilotPlan?.ToLowerInvariant() switch
+        {
+            "individual" or "pro" => "Copilot Pro",
+            "individual_plus" or "pro_plus" => "Copilot Pro+",
+            "free" => "Copilot Free",
+            "business" => "Copilot Business",
+            "enterprise" => "Copilot Enterprise",
+            _ => $"Copilot {data.CopilotPlan ?? "Unknown"}"
+        };
+
+        var identity = new ProviderIdentity
+        {
+            PlanType = planLabel
+        };
+
+        return new UsageSnapshot
+        {
+            ProviderId = "copilot",
+            Primary = primary ?? new RateWindow { UsedPercent = 0, Used = 0, Limit = 0 },
+            Secondary = secondary,
+            Tertiary = null,
+            Identity = identity,
+            FetchedAt = DateTime.UtcNow
+        };
+    }
+
+    private static DateTime? ParseResetDate(string? dateStr)
+    {
+        if (string.IsNullOrEmpty(dateStr))
+            return null;
+
+        if (DateTime.TryParse(dateStr, out var date))
+            return date;
+
+        return null;
+    }
 
     /// <summary>
     /// Fetch complete usage data including premium requests from billing API

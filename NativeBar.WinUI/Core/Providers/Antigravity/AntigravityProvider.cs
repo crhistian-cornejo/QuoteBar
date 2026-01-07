@@ -584,6 +584,13 @@ public class AntigravityLocalProbeStrategy : IProviderFetchStrategy
     private static string FormatResetTime(DateTime resetUtc)
     {
         var diff = resetUtc - DateTime.UtcNow;
+
+        // If reset time is in the past, show "Resets now" or the date
+        if (diff.TotalSeconds <= 0)
+        {
+            return "Resets now";
+        }
+
         if (diff.TotalMinutes < 60) return $"in {diff.TotalMinutes:F0}m";
         if (diff.TotalHours < 24) return $"in {diff.TotalHours:F1}h";
         return resetUtc.ToLocalTime().ToString("MMM d, h:mm tt");

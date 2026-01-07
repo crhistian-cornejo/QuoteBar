@@ -420,10 +420,16 @@ public sealed partial class DroidLoginWindow : Window
             _loginCompletionSource.TrySetResult(result);
         }
 
-        DispatcherQueue.TryEnqueue(() =>
+        // Show success message for a moment before closing
+        DispatcherQueue.TryEnqueue(async () =>
         {
             try
             {
+                if (result.IsSuccess)
+                {
+                    // Let user see the success message
+                    await Task.Delay(1500);
+                }
                 this.Close();
             }
             catch { }

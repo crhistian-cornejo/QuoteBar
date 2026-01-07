@@ -32,34 +32,21 @@ public override string? DashboardUrl => "https://github.com/settings/copilot";
 
 /// <summary>
 /// OAuth strategy for GitHub Copilot using GitHub's OAuth tokens
-/// This is the preferred method when credentials are available
+/// This is the preferred method - uses our Device Flow OAuth or GitHub CLI token
 /// </summary>
 public class CopilotOAuthStrategy : IProviderFetchStrategy
 {
     public string StrategyName => "OAuth";
     public int Priority => 2; // Higher priority - try first
 
-    private CopilotOAuthCredentials? _cachedCredentials;
-
     public Task<bool> CanExecuteAsync()
     {
         try
         {
-            _cachedCredentials = CopilotOAuthCredentialsStore.TryLoad();
-            if (_cachedCredentials == null)
-            {
-                Log("CanExecute: No credentials found");
-                return Task.FromResult(false);
-            }
-
-            if (_cachedCredentials.IsExpired)
-            {
-                Log($"CanExecute: Credentials expired at {_cachedCredentials.ExpiresAt}");
-                return Task.FromResult(false);
-            }
-
-            Log($"CanExecute: Found valid credentials, user={_cachedCredentials.Username}, type={_cachedCredentials.TokenType}");
-            return Task.FromResult(true);
+            // Check if we have a token from any source
+            var hasToken = CopilotTokenStore.HasToken();
+            Log($"CanExecute: HasToken={hasToken}");
+            return Task.FromResult(hasToken);
         }
         catch (Exception ex)
         {
@@ -72,35 +59,19 @@ public class CopilotOAuthStrategy : IProviderFetchStrategy
     {
         try
         {
-            // Use cached credentials or reload
-            var credentials = _cachedCredentials ?? CopilotOAuthCredentialsStore.TryLoad();
-            if (credentials == null)
+            var token = CopilotTokenStore.GetToken();
+            if (string.IsNullOrEmpty(token))
             {
                 return new UsageSnapshot
                 {
                     ProviderId = "copilot",
-                    ErrorMessage = "No GitHub credentials available. Run 'gh auth login' to authenticate.",
+                    ErrorMessage = "No GitHub credentials available. Click 'Connect' to sign in.",
                     FetchedAt = DateTime.UtcNow
                 };
             }
 
-            if (credentials.IsExpired)
-            {
-                return new UsageSnapshot
-                {
-                    ProviderId = "copilot",
-                    ErrorMessage = "GitHub token expired. Run 'gh auth login' to re-authenticate.",
-                    FetchedAt = DateTime.UtcNow
-                };
-            }
-
-            // Fetch usage from GitHub Billing API
-            var usageData = await CopilotUsageFetcher.FetchUsageAsync(
-                credentials.AccessToken,
-                cancellationToken);
-
-            // Convert to UsageSnapshot
-            return CopilotUsageFetcher.ToUsageSnapshot(usageData, credentials);
+            // Use the new FetchUsageSnapshotAsync which tries internal API first
+            return await CopilotUsageFetcher.FetchUsageSnapshotAsync(token, cancellationToken);
         }
         catch (CopilotFetchException ex)
         {
@@ -342,5 +313,88 @@ public class CopilotCLIStrategy : IProviderFetchStrategy
     private void Log(string message)
     {
         DebugLogger.Log("CopilotCLIStrategy", message);
+    }
+}
+
+/// <summary>
+/// Helper class to launch Copilot OAuth login via Device Flow.
+/// </summary>
+public static class CopilotLoginHelper
+{
+    private static NativeBar.WinUI.Views.CopilotLoginWindow? _currentWindow;
+    private static readonly object _lock = new();
+
+    /// <summary>
+    /// Check if user is signed in
+    /// </summary>
+    public static bool IsSignedIn => CopilotTokenStore.HasToken();
+
+    /// <summary>
+    /// Check if the login window is currently open
+    /// </summary>
+    public static bool IsLoginWindowOpen
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _currentWindow != null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Launch the OAuth Device Flow login window.
+    /// Returns the result of the login attempt.
+    /// </summary>
+    public static async Task<NativeBar.WinUI.Views.CopilotLoginResult> LaunchLoginAsync()
+    {
+        lock (_lock)
+        {
+            if (_currentWindow != null)
+            {
+                Log("Login window already open");
+                return NativeBar.WinUI.Views.CopilotLoginResult.Cancelled();
+            }
+        }
+
+        try
+        {
+            Log("Launching Copilot OAuth Device Flow login window");
+
+            var window = new NativeBar.WinUI.Views.CopilotLoginWindow();
+
+            lock (_lock)
+            {
+                _currentWindow = window;
+            }
+
+            var result = await window.ShowLoginAsync();
+
+            Log($"Login completed: Success={result.IsSuccess}, Cancelled={result.IsCancelled}");
+
+            return result;
+        }
+        finally
+        {
+            lock (_lock)
+            {
+                _currentWindow = null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Sign out by clearing the stored token
+    /// </summary>
+    public static void SignOut()
+    {
+        CopilotTokenStore.ClearToken();
+        Log("Signed out");
+    }
+
+    private static void Log(string message)
+    {
+        DebugLogger.Log("CopilotLoginHelper", message);
     }
 }

@@ -11,6 +11,7 @@ using NativeBar.WinUI.Core.Providers;
 using NativeBar.WinUI.Core.Providers.Claude;
 using NativeBar.WinUI.Core.Providers.Copilot;
 using NativeBar.WinUI.Core.Providers.Cursor;
+using NativeBar.WinUI.Core.Providers.Droid;
 using NativeBar.WinUI.Core.Providers.Gemini;
 using NativeBar.WinUI.Core.Providers.Zai;
 using NativeBar.WinUI.Core.Services;
@@ -173,10 +174,22 @@ public sealed class SettingsWindow : Window
 
     private void BuildUI()
     {
+
         _rootGrid = new Grid
         {
             RequestedTheme = _theme.CurrentTheme
         };
+
+        // Add XamlControlsResources to the root grid for MenuFlyout and other controls to work
+        try
+        {
+            var xamlControlsResources = new Microsoft.UI.Xaml.Controls.XamlControlsResources();
+            _rootGrid.Resources.MergedDictionaries.Add(xamlControlsResources);
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("SettingsWindow", "Failed to add XamlControlsResources", ex);
+        }
 
         // Rows: TitleBar, Content
         _rootGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(32) }); // Standard titlebar height
@@ -576,62 +589,89 @@ public sealed class SettingsWindow : Window
 
     private ScrollViewer CreateProvidersSettings()
     {
-        var scroll = new ScrollViewer { Padding = new Thickness(24) };
-        var stack = new StackPanel { Spacing = 16 };
-
-        stack.Children.Add(CreateHeader("Providers"));
-        stack.Children.Add(CreateSubheader("Choose which providers to show in the popup and configure their settings"));
-
-        // Provider visibility section
-        var visibilityCard = new Border
+        DebugLogger.Log("SettingsWindow", "CreateProvidersSettings START");
+        try
         {
-            Background = new SolidColorBrush(_theme.CardColor),
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(16),
-            Margin = new Thickness(0, 0, 0, 16)
-        };
+            var scroll = new ScrollViewer { Padding = new Thickness(24) };
+            var stack = new StackPanel { Spacing = 16 };
 
-        var visibilityStack = new StackPanel { Spacing = 12 };
-        visibilityStack.Children.Add(new TextBlock
+            stack.Children.Add(CreateHeader("Providers"));
+            stack.Children.Add(CreateSubheader("Choose which providers to show in the popup and configure their settings"));
+
+            DebugLogger.Log("SettingsWindow", "CreateProvidersSettings: Creating visibility card");
+            // Provider visibility section
+            var visibilityCard = new Border
+            {
+                Background = new SolidColorBrush(_theme.CardColor),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(16),
+                Margin = new Thickness(0, 0, 0, 16)
+            };
+
+            var visibilityStack = new StackPanel { Spacing = 12 };
+            visibilityStack.Children.Add(new TextBlock
+            {
+                Text = "Show in popup",
+                FontSize = 14,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Margin = new Thickness(0, 0, 0, 8)
+            });
+
+            // Provider toggles
+            DebugLogger.Log("SettingsWindow", "CreateProvidersSettings: Creating provider toggles");
+            visibilityStack.Children.Add(CreateProviderToggle("Codex", "codex", "#7C3AED"));
+            visibilityStack.Children.Add(CreateProviderToggle("Claude", "claude", "#D97757"));
+            visibilityStack.Children.Add(CreateProviderToggle("Cursor", "cursor", "#007AFF"));
+            visibilityStack.Children.Add(CreateProviderToggle("Gemini", "gemini", "#4285F4"));
+            visibilityStack.Children.Add(CreateProviderToggle("Copilot", "copilot", "#24292F"));
+            visibilityStack.Children.Add(CreateProviderToggle("Droid", "droid", "#EE6018"));
+            visibilityStack.Children.Add(CreateProviderToggle("Antigravity", "antigravity", "#FF6B6B"));
+            visibilityStack.Children.Add(CreateProviderToggle("z.ai", "zai", "#E85A6A"));
+
+            visibilityCard.Child = visibilityStack;
+            stack.Children.Add(visibilityCard);
+
+            // Separator
+            stack.Children.Add(new TextBlock
+            {
+                Text = "Provider Configuration",
+                FontSize = 16,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Margin = new Thickness(0, 8, 0, 8)
+            });
+
+            // Provider cards - using dynamic status detection
+            DebugLogger.Log("SettingsWindow", "CreateProvidersSettings: Creating Codex card");
+            stack.Children.Add(CreateProviderCardWithAutoDetect("Codex", "codex", "#7C3AED"));
+            DebugLogger.Log("SettingsWindow", "CreateProvidersSettings: Creating Claude card");
+            stack.Children.Add(CreateProviderCardWithAutoDetect("Claude", "claude", "#D97757"));
+            DebugLogger.Log("SettingsWindow", "CreateProvidersSettings: Creating Cursor card");
+            stack.Children.Add(CreateProviderCardWithAutoDetect("Cursor", "cursor", "#007AFF"));
+            DebugLogger.Log("SettingsWindow", "CreateProvidersSettings: Creating Gemini card");
+            stack.Children.Add(CreateProviderCardWithAutoDetect("Gemini", "gemini", "#4285F4"));
+            DebugLogger.Log("SettingsWindow", "CreateProvidersSettings: Creating Copilot card");
+            stack.Children.Add(CreateProviderCardWithAutoDetect("Copilot", "copilot", "#24292F"));
+            DebugLogger.Log("SettingsWindow", "CreateProvidersSettings: Creating Droid card");
+            stack.Children.Add(CreateProviderCardWithAutoDetect("Droid", "droid", "#EE6018"));
+            DebugLogger.Log("SettingsWindow", "CreateProvidersSettings: Creating Antigravity card");
+            stack.Children.Add(CreateProviderCardWithAutoDetect("Antigravity", "antigravity", "#FF6B6B"));
+            DebugLogger.Log("SettingsWindow", "CreateProvidersSettings: Creating Zai card");
+            stack.Children.Add(CreateZaiProviderCard());
+
+            DebugLogger.Log("SettingsWindow", "CreateProvidersSettings DONE");
+            scroll.Content = stack;
+            return scroll;
+        }
+        catch (Exception ex)
         {
-            Text = "Show in popup",
-            FontSize = 14,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Margin = new Thickness(0, 0, 0, 8)
-        });
-
-        // Provider toggles
-        visibilityStack.Children.Add(CreateProviderToggle("Codex", "codex", "#7C3AED"));
-        visibilityStack.Children.Add(CreateProviderToggle("Claude", "claude", "#D97757"));
-        visibilityStack.Children.Add(CreateProviderToggle("Cursor", "cursor", "#007AFF"));
-        visibilityStack.Children.Add(CreateProviderToggle("Gemini", "gemini", "#4285F4"));
-        visibilityStack.Children.Add(CreateProviderToggle("Copilot", "copilot", "#24292F"));
-        visibilityStack.Children.Add(CreateProviderToggle("Droid", "droid", "#EE6018"));
-        visibilityStack.Children.Add(CreateProviderToggle("z.ai", "zai", "#E85A6A"));
-
-        visibilityCard.Child = visibilityStack;
-        stack.Children.Add(visibilityCard);
-
-        // Separator
-        stack.Children.Add(new TextBlock
-        {
-            Text = "Provider Configuration",
-            FontSize = 16,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Margin = new Thickness(0, 8, 0, 8)
-        });
-
-        // Provider cards - using dynamic status detection
-        stack.Children.Add(CreateProviderCardWithAutoDetect("Codex", "codex", "#7C3AED"));
-        stack.Children.Add(CreateProviderCardWithAutoDetect("Claude", "claude", "#D97757"));
-        stack.Children.Add(CreateProviderCardWithAutoDetect("Cursor", "cursor", "#007AFF"));
-        stack.Children.Add(CreateProviderCardWithAutoDetect("Gemini", "gemini", "#4285F4"));
-        stack.Children.Add(CreateProviderCardWithAutoDetect("Copilot", "copilot", "#24292F"));
-        stack.Children.Add(CreateProviderCardWithAutoDetect("Droid", "droid", "#EE6018"));
-        stack.Children.Add(CreateZaiProviderCard());
-
-        scroll.Content = stack;
-        return scroll;
+            DebugLogger.LogError("SettingsWindow", "CreateProvidersSettings CRASHED", ex);
+            // Return empty scroll to avoid crash
+            var errorScroll = new ScrollViewer { Padding = new Thickness(24) };
+            var errorStack = new StackPanel();
+            errorStack.Children.Add(new TextBlock { Text = $"Error loading providers: {ex.Message}", Foreground = new SolidColorBrush(Microsoft.UI.Colors.Red) });
+            errorScroll.Content = errorStack;
+            return errorScroll;
+        }
     }
 
     private Grid CreateProviderToggle(string displayName, string providerId, string colorHex)
@@ -765,77 +805,68 @@ public sealed class SettingsWindow : Window
 
         // Configure/Connect button with dropdown for connected providers
         FrameworkElement buttonElement;
-        
+
         if (isConnected)
         {
-            // Create a dropdown button for connected providers
+            // Create a dropdown menu for connected providers
             var menuFlyout = new MenuFlyout();
-            
-            // Add "View Details" option
-            var viewItem = new MenuFlyoutItem { Text = "View Details" };
-            viewItem.Click += async (s, e) =>
-            {
-                var detailsContent = GetProviderDetailsContent(providerId);
-                var dialog = new ContentDialog
-                {
-                    Title = $"{name} - Connection Details",
-                    Content = detailsContent,
-                    CloseButtonText = "Close",
-                    XamlRoot = Content.XamlRoot
-                };
-                await dialog.ShowAsync();
-            };
-            menuFlyout.Items.Add(viewItem);
-            
-            // Add "Refresh" option
-            var refreshItem = new MenuFlyoutItem { Text = "Refresh Data" };
+
+            // Refresh Data option
+            var refreshItem = new MenuFlyoutItem { Text = "Refresh Data", Icon = new FontIcon { Glyph = "\uE72C" } };
             refreshItem.Click += async (s, e) =>
             {
-                var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
-                if (usageStore != null)
+                try
                 {
-                    await usageStore.RefreshAsync(providerId);
-                    ShowPage("Providers"); // Refresh the page
+                    var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+                    if (usageStore != null)
+                    {
+                        await usageStore.RefreshAsync(providerId);
+                        DispatcherQueue?.TryEnqueue(() => ShowPage("Providers"));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    DebugLogger.LogError("SettingsWindow", $"Refresh failed for {providerId}", ex);
                 }
             };
             menuFlyout.Items.Add(refreshItem);
-            
+
             menuFlyout.Items.Add(new MenuFlyoutSeparator());
-            
-            // Add "Disconnect" option
-            var disconnectItem = new MenuFlyoutItem 
-            { 
+
+            // Disconnect option
+            var disconnectItem = new MenuFlyoutItem
+            {
                 Text = "Disconnect",
-                Icon = new FontIcon { Glyph = "\uE7E8" } // Unlink icon
+                Icon = new FontIcon { Glyph = "\uE7E8" }
             };
             disconnectItem.Click += async (s, e) =>
             {
                 var confirmDialog = new ContentDialog
                 {
                     Title = $"Disconnect {name}?",
-                    Content = $"This will clear stored credentials for {name}. You'll need to reconnect to see usage data.",
+                    Content = $"This will clear stored credentials for {name}.",
                     PrimaryButtonText = "Disconnect",
                     CloseButtonText = "Cancel",
                     DefaultButton = ContentDialogButton.Close,
                     XamlRoot = Content.XamlRoot
                 };
-                
+
                 var result = await confirmDialog.ShowAsync();
                 if (result == ContentDialogResult.Primary)
                 {
                     DisconnectProvider(providerId);
-                    ShowPage("Providers"); // Refresh the page
+                    DispatcherQueue?.TryEnqueue(() => ShowPage("Providers"));
                 }
             };
             menuFlyout.Items.Add(disconnectItem);
-            
-            var dropDownButton = new DropDownButton
+
+            var configButton = new Button
             {
-                Content = "Configure",
-                Padding = new Thickness(16, 8, 16, 8),
+                Content = "Options ▾",
+                Padding = new Thickness(12, 6, 12, 6),
                 Flyout = menuFlyout
             };
-            buttonElement = dropDownButton;
+            buttonElement = configButton;
         }
         else
         {
@@ -870,25 +901,33 @@ public sealed class SettingsWindow : Window
     /// </summary>
     private async Task ShowConnectDialogAsync(string name, string providerId)
     {
+        // Special handling for providers with OAuth login windows
+        if (providerId.ToLower() == "copilot")
+        {
+            await LaunchCopilotLoginAsync();
+            return;
+        }
+
+        if (providerId.ToLower() == "cursor")
+        {
+            await LaunchCursorLoginAsync();
+            return;
+        }
+
+        if (providerId.ToLower() == "droid")
+        {
+            await LaunchDroidLoginAsync();
+            return;
+        }
+
         string instructions = providerId.ToLower() switch
         {
-            "cursor" => "To connect Cursor:\n\n" +
-                        "1. Open your browser (Edge, Chrome, or Firefox)\n" +
-                        "2. Go to cursor.com and log in\n" +
-                        "3. Come back here and click 'Retry Detection'\n\n" +
-                        "The app will automatically detect your session from the browser.",
             
             "gemini" => "To connect Gemini:\n\n" +
                         "1. Install the Gemini CLI: npm install -g @anthropic-ai/gemini-cli\n" +
                         "2. Run: gemini auth login\n" +
                         "3. Complete the OAuth flow in your browser\n" +
                         "4. Come back here and click 'Retry Detection'",
-            
-            "copilot" => "To connect GitHub Copilot:\n\n" +
-                         "1. Install GitHub CLI: winget install GitHub.cli\n" +
-                         "2. Run: gh auth login\n" +
-                         "3. Select 'GitHub.com' and complete authentication\n" +
-                         "4. Come back here and click 'Retry Detection'",
             
             "codex" => "To connect Codex:\n\n" +
                        "1. Install the Codex CLI\n" +
@@ -905,6 +944,12 @@ public sealed class SettingsWindow : Window
                        "1. Install the Droid CLI\n" +
                        "2. Make sure 'droid --version' works in terminal\n" +
                        "3. Come back here and click 'Retry Detection'",
+            
+            "antigravity" => "To connect Antigravity:\n\n" +
+                             "1. Launch Antigravity IDE\n" +
+                             "2. Make sure it's running and logged in\n" +
+                             "3. Come back here and click 'Retry Detection'\n\n" +
+                             "The app will automatically detect Antigravity when it's running.",
             
             _ => $"Configuration instructions for {name} are not yet available."
         };
@@ -926,8 +971,32 @@ public sealed class SettingsWindow : Window
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.Primary)
         {
-            // Refresh the page to re-detect
-            ShowPage("Providers");
+            // Force refresh usage data for this provider
+            var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+            if (usageStore != null)
+            {
+                try
+                {
+                    await usageStore.RefreshAsync(providerId);
+                }
+                catch (Exception ex)
+                {
+                    DebugLogger.LogError("SettingsWindow", $"RefreshAsync failed for {providerId}", ex);
+                }
+            }
+
+            // Use DispatcherQueue to refresh page after dialog fully closes
+            DispatcherQueue?.TryEnqueue(() =>
+            {
+                try
+                {
+                    ShowPage("Providers");
+                }
+                catch (Exception ex)
+                {
+                    DebugLogger.LogError("SettingsWindow", $"ShowPage failed after Retry Detection", ex);
+                }
+            });
         }
     }
 
@@ -1040,18 +1109,36 @@ public sealed class SettingsWindow : Window
     /// </summary>
     private Border CreateProviderCardWithAutoDetect(string name, string providerId, string colorHex)
     {
-        // First check cached/quick status (UsageStore, session stores - no blocking)
-        var (isConnected, status) = GetProviderStatusFast(providerId);
-        var card = CreateProviderCard(name, providerId, colorHex, isConnected, status);
-
-        // If not connected via fast check, schedule async CLI detection
-        if (!isConnected)
+        try
         {
-            // Run CLI detection in background and update card
-            _ = DetectProviderCLIAsync(card, name, providerId, colorHex);
-        }
+            DebugLogger.Log("SettingsWindow", $"CreateProviderCardWithAutoDetect: {providerId} START");
+            // First check cached/quick status (UsageStore, session stores - no blocking)
+            var (isConnected, status) = GetProviderStatusFast(providerId);
+            DebugLogger.Log("SettingsWindow", $"CreateProviderCardWithAutoDetect: {providerId} status={status}, connected={isConnected}");
+            var card = CreateProviderCard(name, providerId, colorHex, isConnected, status);
+            DebugLogger.Log("SettingsWindow", $"CreateProviderCardWithAutoDetect: {providerId} card created");
 
-        return card;
+            // If not connected via fast check, schedule async CLI detection
+            if (!isConnected)
+            {
+                // Run CLI detection in background and update card
+                _ = DetectProviderCLIAsync(card, name, providerId, colorHex);
+            }
+
+            return card;
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("SettingsWindow", $"CreateProviderCardWithAutoDetect({providerId}) CRASHED", ex);
+            // Return empty border to avoid crash
+            return new Border
+            {
+                Background = new SolidColorBrush(_theme.CardColor),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(16),
+                Child = new TextBlock { Text = $"Error loading {name}: {ex.Message}", Foreground = new SolidColorBrush(Microsoft.UI.Colors.Red) }
+            };
+        }
     }
 
     /// <summary>
@@ -1336,22 +1423,16 @@ public sealed class SettingsWindow : Window
         tokenGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         tokenGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var tokenBox = new PasswordBox
+        var tokenBox = new TextBox
         {
-            PlaceholderText = hasToken ? "Token stored securely (enter new to replace)" : "Enter your z.ai API token",
-            Password = "", // Never pre-fill with actual token for security
+            PlaceholderText = hasToken ? "Token stored (enter new to replace)" : "Enter your z.ai API token",
+            Text = "",
             Padding = new Thickness(12, 8, 12, 8),
             MinHeight = 36,
             MinWidth = 250,
             VerticalAlignment = VerticalAlignment.Center,
             IsEnabled = true,
-            Background = new SolidColorBrush(_theme.IsDarkMode 
-                ? Windows.UI.Color.FromArgb(255, 50, 50, 55) 
-                : Windows.UI.Color.FromArgb(255, 255, 255, 255)),
-            BorderBrush = new SolidColorBrush(_theme.IsDarkMode
-                ? Windows.UI.Color.FromArgb(100, 255, 255, 255)
-                : Windows.UI.Color.FromArgb(100, 0, 0, 0)),
-            BorderThickness = new Thickness(1)
+            AcceptsReturn = false
         };
         Grid.SetColumn(tokenBox, 0);
 
@@ -1366,7 +1447,7 @@ public sealed class SettingsWindow : Window
         saveButton.Click += async (s, e) =>
         {
             // Store securely using Windows Credential Manager
-            var token = string.IsNullOrWhiteSpace(tokenBox.Password) ? null : tokenBox.Password;
+            var token = string.IsNullOrWhiteSpace(tokenBox.Text) ? null : tokenBox.Text;
             var success = ZaiSettingsReader.StoreApiToken(token);
 
             var dialog = new ContentDialog
@@ -1382,11 +1463,11 @@ public sealed class SettingsWindow : Window
             };
             await dialog.ShowAsync();
 
-            // Clear password box after save
-            tokenBox.Password = "";
+            // Clear text box after save
+            tokenBox.Text = "";
 
             // Refresh the providers page to update status
-            ShowPage("Providers");
+            DispatcherQueue?.TryEnqueue(() => ShowPage("Providers"));
         };
         Grid.SetColumn(saveButton, 1);
 
@@ -1492,6 +1573,36 @@ public sealed class SettingsWindow : Window
                         VerticalAlignment = VerticalAlignment.Center
                     };
                     return droidBorder;
+                }
+                break;
+
+            case "antigravity":
+                // Antigravity: Monochrome logo - use contrasting background/logo combo
+                // Dark mode: Black bg with white logo, Light mode: White bg with black logo
+                var antigravityBgColor = isDark ? Colors.Black : Colors.White;
+                var antigravitySvgFile = isDark ? "antigravity.svg" : "antigravity-black.svg";
+                var antigravitySvgPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icons", antigravitySvgFile);
+                if (System.IO.File.Exists(antigravitySvgPath))
+                {
+                    var antigravityBorder = new Border
+                    {
+                        Width = 36,
+                        Height = 36,
+                        CornerRadius = new CornerRadius(8),
+                        Background = new SolidColorBrush(antigravityBgColor),
+                        BorderBrush = new SolidColorBrush(isDark ? Windows.UI.Color.FromArgb(60, 255, 255, 255) : Windows.UI.Color.FromArgb(40, 0, 0, 0)),
+                        BorderThickness = new Thickness(1),
+                        Padding = new Thickness(6)
+                    };
+                    antigravityBorder.Child = new Image
+                    {
+                        Width = 24,
+                        Height = 24,
+                        Source = new SvgImageSource(new Uri(antigravitySvgPath)),
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Center
+                    };
+                    return antigravityBorder;
                 }
                 break;
 
@@ -1952,20 +2063,20 @@ public sealed class SettingsWindow : Window
 
         innerStack.Children.Add(new TextBlock
         {
-            Text = "Select providers to show in tray (max 3)",
+            Text = "Select provider for tray badge",
             FontSize = 14,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
         });
 
         innerStack.Children.Add(new TextBlock
         {
-            Text = "Providers will show remaining % (100 - used)",
+            Text = "Shows remaining % (100 - used) for the selected provider",
             FontSize = 12,
             Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
             Margin = new Thickness(0, 0, 0, 8)
         });
 
-        // Provider checkboxes
+        // Provider radio buttons (only one selectable)
         var providers = new[] {
             ("Claude", "claude", "#D97757"),
             ("Gemini", "gemini", "#4285F4"),
@@ -1973,13 +2084,14 @@ public sealed class SettingsWindow : Window
             ("Cursor", "cursor", "#007AFF"),
             ("Codex", "codex", "#7C3AED"),
             ("Droid", "droid", "#EE6018"),
+            ("Antigravity", "antigravity", "#FF6B6B"),
             ("z.ai", "zai", "#E85A6A")
         };
 
         foreach (var (displayName, id, color) in providers)
         {
-            var isSelected = _settings.Settings.TrayBadgeProviders.Contains(id);
-            innerStack.Children.Add(CreateTrayBadgeProviderCheckbox(displayName, id, color, isSelected));
+            var isSelected = _settings.Settings.TrayBadgeProvider == id;
+            innerStack.Children.Add(CreateTrayBadgeProviderRadio(displayName, id, color, isSelected));
         }
 
         card.Child = innerStack;
@@ -1987,25 +2099,25 @@ public sealed class SettingsWindow : Window
         return panel;
     }
 
-    private Grid CreateTrayBadgeProviderCheckbox(string displayName, string providerId, string colorHex, bool isChecked)
+    private Grid CreateTrayBadgeProviderRadio(string displayName, string providerId, string colorHex, bool isChecked)
     {
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        // Checkbox
-        var checkbox = new CheckBox
+        // RadioButton (only one can be selected)
+        var radio = new RadioButton
         {
             IsChecked = isChecked,
             Tag = providerId,
+            GroupName = "TrayBadgeProvider",
             VerticalAlignment = VerticalAlignment.Center
         };
-        checkbox.Checked += OnTrayBadgeProviderChanged;
-        checkbox.Unchecked += OnTrayBadgeProviderChanged;
-        Grid.SetColumn(checkbox, 0);
+        radio.Checked += OnTrayBadgeProviderRadioChanged;
+        Grid.SetColumn(radio, 0);
 
-        // Provider icon (SVG) - use proper icons instead of color dots
+        // Provider icon (SVG)
         FrameworkElement iconElement;
         var svgFileName = GetProviderSvgFileName(providerId);
         if (!string.IsNullOrEmpty(svgFileName))
@@ -2058,41 +2170,21 @@ public sealed class SettingsWindow : Window
         };
         Grid.SetColumn(nameText, 2);
 
-        grid.Children.Add(checkbox);
+        grid.Children.Add(radio);
         grid.Children.Add(iconElement);
         grid.Children.Add(nameText);
 
         return grid;
     }
 
-    private void OnTrayBadgeProviderChanged(object sender, RoutedEventArgs e)
+    private void OnTrayBadgeProviderRadioChanged(object sender, RoutedEventArgs e)
     {
-        if (sender is not CheckBox checkbox) return;
-        var providerId = checkbox.Tag?.ToString();
+        if (sender is not RadioButton radio) return;
+        var providerId = radio.Tag?.ToString();
         if (string.IsNullOrEmpty(providerId)) return;
 
-        var isChecked = checkbox.IsChecked == true;
-        var providers = _settings.Settings.TrayBadgeProviders;
-
-        if (isChecked)
-        {
-            // Check if already at max (3)
-            if (providers.Count >= 3 && !providers.Contains(providerId))
-            {
-                // Uncheck and show message
-                checkbox.IsChecked = false;
-                return;
-            }
-            if (!providers.Contains(providerId))
-            {
-                providers.Add(providerId);
-            }
-        }
-        else
-        {
-            providers.Remove(providerId);
-        }
-
+        // Set the single selected provider
+        _settings.Settings.TrayBadgeProvider = providerId;
         _settings.Save();
     }
 
@@ -2135,7 +2227,7 @@ public sealed class SettingsWindow : Window
             "copilot" => isDark ? "github-copilot-white.svg" : "github-copilot.svg",
             "cursor" => isDark ? "cursor-white.svg" : "cursor.svg",
             "droid" => isDark ? "droid-white.svg" : "droid.svg",
-            "antigravity" => "antigravity.svg",  // Red - visible in both modes
+            "antigravity" => "antigravity.svg",  // White logo - works in dark mode, light mode handled by special case
             "zai" => isDark ? "zai-white.svg" : "zai.svg",  // Black/white based on theme
             _ => null
         };
@@ -2237,10 +2329,115 @@ public sealed class SettingsWindow : Window
             }
             else
             {
-                titleBar.ButtonForegroundColor = Colors.Black;
+            titleBar.ButtonForegroundColor = Colors.Black;
                 titleBar.ButtonHoverBackgroundColor = Windows.UI.Color.FromArgb(30, 0, 0, 0);
                 titleBar.ButtonPressedBackgroundColor = Windows.UI.Color.FromArgb(50, 0, 0, 0);
             }
+        }
+    }
+
+    /// <summary>
+    /// Launch the Copilot OAuth Device Flow login window
+    /// </summary>
+    private async Task LaunchCopilotLoginAsync()
+    {
+        try
+        {
+            var result = await CopilotLoginHelper.LaunchLoginAsync();
+            
+            if (result.IsSuccess)
+            {
+                // Refresh Copilot usage data
+                var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+                if (usageStore != null)
+                {
+                    await usageStore.RefreshAsync("copilot");
+                }
+
+                // Refresh the providers page after a short delay to avoid COMException
+                await Task.Delay(500);
+                DispatcherQueue?.TryEnqueue(() =>
+                {
+                    if (_currentPage == "Providers")
+                    {
+                        ShowPage("Providers");
+                    }
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("SettingsWindow", "LaunchCopilotLoginAsync failed", ex);
+        }
+    }
+
+    /// <summary>
+    /// Launch the Cursor WebView login window
+    /// </summary>
+    private async Task LaunchCursorLoginAsync()
+    {
+        try
+        {
+            var result = await CursorLoginHelper.LaunchLoginAsync();
+
+            if (result.IsSuccess)
+            {
+                // Refresh Cursor usage data
+                var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+                if (usageStore != null)
+                {
+                    await usageStore.RefreshAsync("cursor");
+                }
+
+                // Refresh the providers page after a short delay
+                await Task.Delay(500);
+                DispatcherQueue?.TryEnqueue(() =>
+                {
+                    if (_currentPage == "Providers")
+                    {
+                        ShowPage("Providers");
+                    }
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("SettingsWindow", "LaunchCursorLoginAsync failed", ex);
+        }
+    }
+
+    /// <summary>
+    /// Launch the Droid WebView login window
+    /// </summary>
+    private async Task LaunchDroidLoginAsync()
+    {
+        try
+        {
+            var result = await DroidLoginHelper.LaunchLoginAsync();
+
+            if (result.IsSuccess)
+            {
+                // Refresh Droid usage data
+                var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+                if (usageStore != null)
+                {
+                    await usageStore.RefreshAsync("droid");
+                }
+
+                // Refresh the providers page after a short delay
+                await Task.Delay(500);
+                DispatcherQueue?.TryEnqueue(() =>
+                {
+                    if (_currentPage == "Providers")
+                    {
+                        ShowPage("Providers");
+                    }
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("SettingsWindow", "LaunchDroidLoginAsync failed", ex);
         }
     }
 }

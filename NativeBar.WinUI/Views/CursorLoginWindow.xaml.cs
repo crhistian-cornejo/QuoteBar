@@ -274,12 +274,17 @@ public sealed partial class CursorLoginWindow : Window
         {
             _loginCompletionSource.TrySetResult(result);
         }
-        
-        // Close window on success or failure (not cancellation, already handled)
-        DispatcherQueue.TryEnqueue(() =>
+
+        // Show success message for a moment before closing
+        DispatcherQueue.TryEnqueue(async () =>
         {
             try
             {
+                if (result.IsSuccess)
+                {
+                    // Let user see the success message
+                    await Task.Delay(1500);
+                }
                 this.Close();
             }
             catch { }

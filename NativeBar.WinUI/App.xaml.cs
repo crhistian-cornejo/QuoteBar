@@ -23,7 +23,10 @@ public partial class App : Application
     private PopupStateManager? _popupState;
     private TaskbarOverlayHelper? _taskbarOverlay;
     private UsageStore? _usageStore;
+    #pragma warning disable CS0649 // Field is never assigned - temporarily disabled, see OnLaunched
     private HotkeyService? _hotkeyService;
+    #pragma warning restore CS0649
+    private TrayIconsService? _trayIconsService;
 
     /// <summary>
     /// Gets the service provider for dependency injection
@@ -115,6 +118,13 @@ public partial class App : Application
             // Subscribe to settings changes (for tray badge toggle)
             SettingsService.Instance.SettingsChanged += OnSettingsChanged;
 
+            // Initialize multiple tray icons service
+            _trayIconsService = new TrayIconsService(
+                _dispatcherQueue,
+                () => _popupState?.OnTrayIconClick(),
+                () => _notifyIcon?.ShowContextMenu(),
+                OnExitClick);
+
             // Initialize global hotkey service - TEMPORARILY DISABLED
             // TODO: Re-enable after fixing crash
             // _hotkeyService = HotkeyService.Instance;
@@ -163,6 +173,7 @@ public partial class App : Application
     {
         DebugLogger.Log("App", "Exiting...");
         _hotkeyService?.Dispose();
+        _trayIconsService?.Dispose();
         _taskbarOverlay?.Dispose();
         _notifyIcon?.Dispose();
         Application.Current.Exit();
@@ -211,18 +222,20 @@ public partial class App : Application
             {
                 // Reset to default icon if badges disabled
                 _notifyIcon?.ResetToDefaultIcon();
+                _trayIconsService?.RemoveAllIcons();
                 return;
             }
 
             if (_usageStore == null || _notifyIcon == null) return;
 
-            // Get all snapshots and generate badge
-            var snapshots = _usageStore.GetAllSnapshots();
+            // Get snapshot for the selected provider
+            var providerId = settings.TrayBadgeProvider ?? "claude";
+            var snapshot = _usageStore.GetSnapshot(providerId);
             var isDarkMode = ThemeService.Instance.IsDarkMode;
-            
-            using var badge = TrayBadgeGenerator.GenerateBadgeFromSnapshots(
-                snapshots,
-                settings.TrayBadgeProviders,
+
+            using var badge = TrayBadgeGenerator.GenerateBadgeFromSnapshot(
+                providerId,
+                snapshot,
                 isDarkMode);
 
             _notifyIcon.UpdateIcon(badge);

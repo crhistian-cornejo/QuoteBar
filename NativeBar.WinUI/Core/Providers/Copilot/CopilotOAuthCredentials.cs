@@ -51,6 +51,11 @@ public static class CopilotOAuthCredentialsStore
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "GitHub CLI", "hosts.yml");
 
+    // Our own stored token from OAuth Device Flow
+    private static readonly string StoredTokenPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "QuoteBar", "copilot_token.json");
+
     // Cache to avoid repeated file access
     private static CopilotOAuthCredentials? _cachedCredentials;
     private static DateTime? _cacheTimestamp;
@@ -75,7 +80,24 @@ public static class CopilotOAuthCredentialsStore
 
         Exception? lastError = null;
 
-        // 1. Try environment variables first (highest priority, most explicit)
+        // 1. Try our own stored token first (from OAuth Device Flow)
+        try
+        {
+            var storedCreds = LoadFromStoredToken();
+            if (storedCreds != null)
+            {
+                UpdateCache(storedCreds);
+                Log($"Loaded token from stored OAuth file");
+                return storedCreds;
+            }
+        }
+        catch (Exception ex)
+        {
+            lastError = ex;
+            Log($"Stored token check failed: {ex.Message}");
+        }
+
+        // 2. Try environment variables (highest priority for external config)
         try
         {
             var envToken = LoadFromEnvironment();
@@ -97,7 +119,7 @@ public static class CopilotOAuthCredentialsStore
             Log($"Environment variable check failed: {ex.Message}");
         }
 
-        // 2. Try GitHub CLI hosts.yml (user's own authenticated session via 'gh auth login')
+        // 3. Try GitHub CLI hosts.yml (user's own authenticated session via 'gh auth login')
         try
         {
             var ghCliCreds = LoadFromGhCli();
@@ -115,7 +137,7 @@ public static class CopilotOAuthCredentialsStore
         }
 
         throw new CopilotOAuthCredentialsException(
-            "No GitHub Copilot credentials found. Please authenticate using 'gh auth login' in your terminal, or set the GITHUB_TOKEN environment variable.",
+            "No GitHub Copilot credentials found. Please use the Connect button in Settings, run 'gh auth login', or set the GITHUB_TOKEN environment variable.",
             lastError!);
     }
 
@@ -153,6 +175,41 @@ public static class CopilotOAuthCredentialsStore
             _cachedCredentials = creds;
             _cacheTimestamp = DateTime.UtcNow;
         }
+    }
+
+    private static CopilotOAuthCredentials? LoadFromStoredToken()
+    {
+        if (!File.Exists(StoredTokenPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var json = File.ReadAllText(StoredTokenPath);
+            var storedToken = JsonSerializer.Deserialize<StoredTokenData>(json);
+
+            if (!string.IsNullOrEmpty(storedToken?.AccessToken))
+            {
+                return new CopilotOAuthCredentials
+                {
+                    AccessToken = storedToken.AccessToken,
+                    TokenType = "device_flow"
+                };
+            }
+        }
+        catch (Exception ex)
+        {
+            Log($"Failed to load stored token: {ex.Message}");
+        }
+
+        return null;
+    }
+
+    private class StoredTokenData
+    {
+        public string? AccessToken { get; set; }
+        public DateTime CreatedAt { get; set; }
     }
 
     private static string? LoadFromEnvironment()

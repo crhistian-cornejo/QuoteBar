@@ -48,10 +48,14 @@
                 Visibility="Visible"
                 Canvas.ZIndex="10">
                 <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="16">
-                    <ProgressRing IsActive="True" Width="48" Height="48"/>
-                    <TextBlock 
+                    <FontIcon
+                        x:Name="LoadingSpinner"
+                        Glyph="&#xE72C;"
+                        Foreground="#007AFF"
+                        FontSize="32"/>
+                    <TextBlock
                         x:Name="LoadingText"
-                        Text="Loading Cursor login..." 
+                        Text="Loading Cursor login..."
                         Foreground="#888"
                         HorizontalAlignment="Center"/>
                 </StackPanel>

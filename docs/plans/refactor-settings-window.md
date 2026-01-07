@@ -132,6 +132,100 @@ NativeBar.WinUI/
 - Considerar usar `UserControl` para páginas o simplemente `FrameworkElement`
 - El `SettingsService` debe seguir siendo singleton compartido
 
+---
+
+## Mejora UI: Sidebar Colapsable (Estilo Copilot)
+
+### Referencia Visual
+
+La UI de Microsoft Copilot usa un patrón de navegación moderno con sidebar colapsable:
+
+| Estado | Descripción |
+|--------|-------------|
+| **Expandido** | Sidebar visible con iconos + texto, panel de navegación a la izquierda |
+| **Colapsado** | Sidebar oculto, solo iconos en header (logo + hamburger + home) |
+
+### Implementación con NavigationView
+
+Reemplazar el `SplitView` manual actual por el control nativo `NavigationView` de WinUI 3:
+
+```xml
+<NavigationView
+    x:Name="NavView"
+    PaneDisplayMode="Auto"
+    OpenPaneLength="280"
+    CompactPaneLength="48"
+    IsPaneToggleButtonVisible="True"
+    IsBackButtonVisible="Collapsed"
+    IsSettingsVisible="False">
+    
+    <NavigationView.MenuItems>
+        <NavigationViewItem Icon="Setting" Content="General" Tag="General"/>
+        <NavigationViewItem Icon="Contact" Content="Providers" Tag="Providers"/>
+        <NavigationViewItem Icon="View" Content="Appearance" Tag="Appearance"/>
+        <NavigationViewItem Icon="Message" Content="Notifications" Tag="Notifications"/>
+    </NavigationView.MenuItems>
+    
+    <NavigationView.FooterMenuItems>
+        <NavigationViewItem Icon="Help" Content="About" Tag="About"/>
+    </NavigationView.FooterMenuItems>
+    
+    <Frame x:Name="ContentFrame"/>
+</NavigationView>
+```
+
+### Modos de PaneDisplayMode
+
+| Modo | Comportamiento |
+|------|----------------|
+| `Left` | Siempre expandido |
+| `LeftCompact` | Solo iconos, expandir al hacer hover |
+| `LeftMinimal` | Completamente oculto, overlay al hacer clic en hamburger |
+| `Auto` | **Recomendado** - Cambia automáticamente según ancho de ventana |
+
+### Breakpoints Automáticos (PaneDisplayMode="Auto")
+
+```
+Ancho ventana >= 1008px  →  Left (expandido)
+Ancho ventana >= 641px   →  LeftCompact (iconos)
+Ancho ventana < 641px    →  LeftMinimal (oculto)
+```
+
+### Configuración del Header (Estilo Copilot)
+
+```csharp
+// Custom header con logo de la app
+NavView.PaneHeader = new StackPanel
+{
+    Orientation = Orientation.Horizontal,
+    Children = 
+    {
+        new Image { Source = new BitmapImage(logoUri), Width = 24, Height = 24 },
+        new TextBlock { Text = "QuoteBar", FontWeight = FontWeights.SemiBold, Margin = new Thickness(8,0,0,0) }
+    }
+};
+```
+
+### Beneficios
+
+1. **Responsivo**: Se adapta automáticamente al tamaño de ventana
+2. **Nativo**: Usa el control estándar de WinUI 3, soporte completo de accesibilidad
+3. **Consistente**: Mismo patrón que Windows 11 Settings, Microsoft Store, Copilot
+4. **Animaciones**: Transiciones fluidas incluidas por defecto
+5. **Keyboard**: Navegación con teclado funciona out-of-the-box
+
+### Pasos de Implementación
+
+- [ ] Crear `SettingsWindow.xaml` con `NavigationView`
+- [ ] Convertir páginas a `Page` o `UserControl` navegables
+- [ ] Implementar `NavigationView.SelectionChanged` para navegación
+- [ ] Configurar `PaneHeader` con logo de QuoteBar
+- [ ] Usar `ContentFrame.Navigate()` para cambiar páginas
+- [ ] Agregar iconos (`FontIcon` o `SymbolIcon`) a cada `NavigationViewItem`
+- [ ] Probar comportamiento en diferentes tamaños de ventana
+
+---
+
 ## Riesgos
 
 - **Bajo**: Cambios son internos, no afectan API pública
@@ -139,5 +233,6 @@ NativeBar.WinUI/
 
 ## Estimación
 
-- **Tiempo**: 2-4 horas
-- **Complejidad**: Media
+- **Tiempo**: 4-6 horas (incluyendo NavigationView)
+- **Complejidad**: Media-Alta
+

@@ -24,8 +24,9 @@
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.0" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="9.0.0" />
+    <PackageReference Include="Svg" Version="3.4.7" />
     <PackageReference Include="System.Text.Json" Version="9.0.1" />
-    <PackageReference Include="H.NotifyIcon.WinUI" Version="2.1.4" />
+    <PackageReference Include="H.NotifyIcon.WinUI" Version="2.1.0" />
     <PackageReference Include="System.Drawing.Common" Version="8.0.10" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
     <!-- NOTE: System.Data.SQLite was REMOVED to avoid antivirus detection.

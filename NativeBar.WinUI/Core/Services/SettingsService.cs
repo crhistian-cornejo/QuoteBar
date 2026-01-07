@@ -80,7 +80,7 @@ public class AppSettings
 
     // Tray Badge Settings
     public bool TrayBadgeEnabled { get; set; } = false;
-    public List<string> TrayBadgeProviders { get; set; } = new() { "claude", "gemini", "copilot" };
+    public string TrayBadgeProvider { get; set; } = "claude"; // Single provider for tray badge
 
     // Notifications
     public bool UsageAlertsEnabled { get; set; } = true;
