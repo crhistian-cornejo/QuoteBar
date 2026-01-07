@@ -118,7 +118,14 @@ public class AboutSettingsPage : ISettingsPage
     {
         try
         {
-            var logoPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "LOGO-NATIVE.png");
+            // Try LOGO-128.png first (best quality for 80x80 display)
+            var logoPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "LOGO-128.png");
+            if (!System.IO.File.Exists(logoPath))
+            {
+                // Fallback to LOGO-256.png
+                logoPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "LOGO-256.png");
+            }
+
             if (System.IO.File.Exists(logoPath))
             {
                 var image = new Image
@@ -128,11 +135,7 @@ public class AboutSettingsPage : ISettingsPage
                     Source = new BitmapImage(new Uri(logoPath)),
                     HorizontalAlignment = HorizontalAlignment.Center
                 };
-                return new Border
-                {
-                    CornerRadius = new CornerRadius(16),
-                    Child = image
-                };
+                return image;
             }
         }
         catch { }

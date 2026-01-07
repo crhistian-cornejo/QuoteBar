@@ -1004,7 +1004,7 @@ public sealed class TrayPopupWindow : Window
                 {
                     Width = 36,
                     Height = 36,
-                    Source = new BitmapImage(new Uri(logoPath))
+                    Source = new BitmapImage(new Uri(logoPath, UriKind.Absolute))
                 };
                 _logoContainer.Child = logoImage;
             }

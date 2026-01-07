@@ -15,7 +15,7 @@ public class ZaiProviderDescriptor : ProviderDescriptor
     public override string SecondaryColor => "#D44A5A";
     public override string PrimaryLabel => "Tokens";
     public override string SecondaryLabel => "MCP";
-public override string? DashboardUrl => "https://z.ai/account";
+    public override string? DashboardUrl => "https://z.ai/account";
 
     public override bool SupportsOAuth => false;
     public override bool SupportsCLI => false;
@@ -181,8 +181,12 @@ public static class ZaiUsageFetcher
         var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
 
-        // Check success
-        if (!root.TryGetProperty("success", out var successProp) || !successProp.GetBoolean())
+        // Check success (CodexBar validates both `success` + `code == 200`)
+        var hasSuccess = root.TryGetProperty("success", out var successProp) && successProp.ValueKind == JsonValueKind.True;
+        var hasCode200 = !root.TryGetProperty("code", out var codeProp) ||
+            (codeProp.ValueKind == JsonValueKind.Number && codeProp.TryGetInt32(out var code) && code == 200);
+
+        if (!hasSuccess || !hasCode200)
         {
             var msg = root.TryGetProperty("msg", out var msgProp) ? msgProp.GetString() : "Unknown error";
             throw new ZaiUsageException($"z.ai API failed: {msg}");
@@ -197,6 +201,7 @@ public static class ZaiUsageFetcher
         ZaiLimitEntry? tokenLimit = null;
         ZaiLimitEntry? timeLimit = null;
         string? planName = null;
+        Dictionary<string, int>? usageDetails = null;
 
         // Parse plan name (try multiple field names)
         if (data.TryGetProperty("planName", out var planProp))
@@ -221,10 +226,25 @@ public static class ZaiUsageFetcher
                     else if (entry.Type == ZaiLimitType.TimeLimit)
                         timeLimit = entry;
                 }
+
+                // Best-effort parse of per-model usage details (CodexBar: `usageDetails[]`).
+                // Aggregate across all limits so it works even if the API moves fields.
+                var parsedDetails = ParseUsageDetails(limitEl);
+                if (parsedDetails != null)
+                {
+                    usageDetails ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var (modelCode, modelUsage) in parsedDetails)
+                    {
+                        if (usageDetails.TryGetValue(modelCode, out var existing))
+                            usageDetails[modelCode] = existing + modelUsage;
+                        else
+                            usageDetails[modelCode] = modelUsage;
+                    }
+                }
             }
         }
 
-        return ToUsageSnapshot(tokenLimit, timeLimit, planName);
+        return ToUsageSnapshot(tokenLimit, timeLimit, planName, usageDetails);
     }
 
     private static ZaiLimitEntry? ParseLimitEntry(JsonElement el)
@@ -268,13 +288,18 @@ public static class ZaiUsageFetcher
         };
     }
 
-    private static UsageSnapshot ToUsageSnapshot(ZaiLimitEntry? tokenLimit, ZaiLimitEntry? timeLimit, string? planName)
+    private static UsageSnapshot ToUsageSnapshot(
+        ZaiLimitEntry? tokenLimit,
+        ZaiLimitEntry? timeLimit,
+        string? planName,
+        Dictionary<string, int>? usageDetails)
     {
         var primaryLimit = tokenLimit ?? timeLimit;
         var secondaryLimit = (tokenLimit != null && timeLimit != null) ? timeLimit : null;
 
         RateWindow? primary = null;
         RateWindow? secondary = null;
+        RateWindow? tertiary = null;
 
         if (primaryLimit != null)
         {
@@ -283,7 +308,8 @@ public static class ZaiUsageFetcher
                 UsedPercent = primaryLimit.ComputedUsedPercent,
                 Used = primaryLimit.CurrentValue,
                 Limit = primaryLimit.Usage,
-                WindowMinutes = primaryLimit.WindowMinutes,
+                // Match CodexBar: show window minutes only for token windows.
+                WindowMinutes = primaryLimit.Type == ZaiLimitType.TokensLimit ? primaryLimit.WindowMinutes : null,
                 ResetsAt = primaryLimit.NextResetTime,
                 ResetDescription = primaryLimit.WindowLabel ?? (primaryLimit.Type == ZaiLimitType.TimeLimit ? "Monthly" : null),
                 Unit = primaryLimit.Type == ZaiLimitType.TokensLimit ? "tokens" : "time"
@@ -297,11 +323,48 @@ public static class ZaiUsageFetcher
                 UsedPercent = secondaryLimit.ComputedUsedPercent,
                 Used = secondaryLimit.CurrentValue,
                 Limit = secondaryLimit.Usage,
-                WindowMinutes = secondaryLimit.WindowMinutes,
+                // Match CodexBar: TIME_LIMIT is usually monthly; don't show an hourly window.
+                WindowMinutes = null,
                 ResetsAt = secondaryLimit.NextResetTime,
                 ResetDescription = secondaryLimit.WindowLabel ?? "Monthly",
                 Unit = "time"
             };
+        }
+
+        // If the API sends per-model usage data, surface it using the existing UI slots.
+        // Reuse the Copilot pattern (Secondary/Tertiary as model breakdown) without changing UI.
+        if (usageDetails != null && usageDetails.Count > 0)
+        {
+            var ordered = usageDetails
+                .Where(kv => !string.IsNullOrWhiteSpace(kv.Key) && kv.Value > 0)
+                .OrderByDescending(kv => kv.Value)
+                .ToList();
+
+            if (ordered.Count > 0)
+            {
+                var top = ordered[0];
+                var baseForPercent = primary?.Used ?? ordered.Sum(kv => (double)kv.Value);
+                var topPercent = baseForPercent > 0 ? (top.Value / baseForPercent) * 100 : 0;
+
+                tertiary = ordered.Count > 1
+                    ? new RateWindow
+                    {
+                        UsedPercent = baseForPercent > 0 ? (ordered[1].Value / baseForPercent) * 100 : 0,
+                        Used = ordered[1].Value,
+                        Limit = null,
+                        Unit = ordered[1].Key
+                    }
+                    : null;
+
+                // Only fill Secondary if it's not already used for TIME_LIMIT.
+                secondary ??= new RateWindow
+                {
+                    UsedPercent = topPercent,
+                    Used = top.Value,
+                    Limit = null,
+                    Unit = top.Key
+                };
+            }
         }
 
         return new UsageSnapshot
@@ -309,12 +372,45 @@ public static class ZaiUsageFetcher
             ProviderId = "zai",
             Primary = primary ?? new RateWindow { UsedPercent = 0, ResetDescription = "No data" },
             Secondary = secondary,
+            Tertiary = tertiary,
             Identity = new ProviderIdentity
             {
                 PlanType = string.IsNullOrWhiteSpace(planName) ? "z.ai" : planName.Trim()
             },
             FetchedAt = DateTime.UtcNow
         };
+    }
+
+    private static Dictionary<string, int>? ParseUsageDetails(JsonElement el)
+    {
+        if (!el.TryGetProperty("usageDetails", out var detailsEl) || detailsEl.ValueKind != JsonValueKind.Array)
+            return null;
+
+        Dictionary<string, int>? result = null;
+        foreach (var item in detailsEl.EnumerateArray())
+        {
+            if (!item.TryGetProperty("modelCode", out var modelProp))
+                continue;
+
+            var modelCode = modelProp.GetString();
+            if (string.IsNullOrWhiteSpace(modelCode))
+                continue;
+
+            var usage = item.TryGetProperty("usage", out var usageProp) && usageProp.ValueKind == JsonValueKind.Number
+                ? usageProp.GetInt32()
+                : 0;
+
+            if (usage <= 0)
+                continue;
+
+            result ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            if (result.TryGetValue(modelCode, out var existing))
+                result[modelCode] = existing + usage;
+            else
+                result[modelCode] = usage;
+        }
+
+        return result;
     }
 
     private static void Log(string message)

@@ -142,15 +142,27 @@ public sealed class SettingsWindow : Window
     {
         _rootGrid = new Grid { RequestedTheme = _theme.CurrentTheme };
 
+        // NOTE: Adding XamlControlsResources can crash in unpackaged WinUI 3 apps
+        // (missing AcrylicBackgroundFillColorDefaultBrush). We avoid it to keep
+        // Settings stable.
+        // App.xaml.cs already documents this for the app root.
+        //
+        // If we later move to packaged/MSIX, we can reconsider enabling it here.
+        //
+        // _rootGrid.Resources.MergedDictionaries.Add(new XamlControlsResources());
+
+        // Extra defense: some WinUI components may try to resolve Acrylic brushes
+        // even when we don't explicitly use XamlControlsResources.
+        // Provide a safe fallback so missing resources don't crash the Settings window.
         try
         {
-            _rootGrid.Resources.MergedDictionaries.Add(new XamlControlsResources());
+            if (!_rootGrid.Resources.ContainsKey("AcrylicBackgroundFillColorDefaultBrush"))
+            {
+                _rootGrid.Resources["AcrylicBackgroundFillColorDefaultBrush"] = new SolidColorBrush(Colors.Transparent);
+            }
         }
-        catch (Exception ex)
-        {
-            DebugLogger.LogError("SettingsWindow", "Failed to add XamlControlsResources", ex);
-        }
-
+        catch { }
+ 
         // Two columns: Sidebar (240px) + Content (*)
         _rootGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(240) });
         _rootGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -247,7 +259,7 @@ public sealed class SettingsWindow : Window
                 {
                     Width = 18,
                     Height = 18,
-                    Source = new BitmapImage(new Uri(logoPath)),
+                    Source = new BitmapImage(new Uri(logoPath, UriKind.Absolute)),
                     VerticalAlignment = VerticalAlignment.Center
                 };
             }

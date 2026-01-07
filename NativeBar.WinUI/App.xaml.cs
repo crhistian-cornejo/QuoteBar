@@ -8,6 +8,7 @@ using NativeBar.WinUI.Helpers;
 using Microsoft.Extensions.DependencyInjection;
 using System;
 using System.Runtime.InteropServices;
+using System.IO;
 
 namespace NativeBar.WinUI;
 
@@ -49,12 +50,19 @@ public partial class App : Application
             UnhandledException += (s, e) =>
             {
                 DebugLogger.LogError("App", "CRASH", e.Exception);
+
+                // Keep the app alive on UI exceptions.
+                // When Settings/WinUI resources fail to resolve (often surfaced as COMException),
+                // crashing the whole tray app is worse UX than surfacing an error view.
                 e.Handled = true;
             };
 
             // NOTE: XamlControlsResources removed - causes crash in unpackaged WinUI 3 apps
             // The app works fine without it; basic WinUI controls still render correctly
             InitializeComponent();
+
+            // Ensure icons are generated from SVG
+            IconGenerator.EnsureIconsExist();
 
             ConfigureServices();
 
@@ -734,16 +742,16 @@ public class NotifyIconHelper : IDisposable
     {
         try
         {
-            var exePath = System.Reflection.Assembly.GetExecutingAssembly().Location;
-            var exeDir = System.IO.Path.GetDirectoryName(exePath) ?? "";
-            var logoPath = System.IO.Path.Combine(exeDir, "Assets", "LOGO-NATIVE.png");
-
-            if (!System.IO.File.Exists(logoPath))
+            // Try to load from SVG first using IconGenerator
+            var iconHandle = NativeBar.WinUI.Helpers.IconGenerator.GetTrayIconHandle();
+            if (iconHandle != IntPtr.Zero)
             {
-                // Try alternate paths
-                var appDir = AppContext.BaseDirectory;
-                logoPath = System.IO.Path.Combine(appDir, "Assets", "LOGO-NATIVE.png");
+                return iconHandle;
             }
+
+            // Fallback to PNG
+            var appDir = AppContext.BaseDirectory;
+            var logoPath = System.IO.Path.Combine(appDir, "Assets", "LOGO-NATIVE.png");
 
             if (System.IO.File.Exists(logoPath))
             {

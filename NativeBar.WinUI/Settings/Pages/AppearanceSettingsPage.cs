@@ -211,7 +211,7 @@ public class AppearanceSettingsPage : ISettingsPage
                 {
                     Width = 16,
                     Height = 16,
-                    Source = new SvgImageSource(new Uri(svgPath)),
+                    Source = new SvgImageSource(new Uri(svgPath, UriKind.Absolute)),
                     Margin = new Thickness(4, 0, 8, 0),
                     VerticalAlignment = VerticalAlignment.Center
                 };

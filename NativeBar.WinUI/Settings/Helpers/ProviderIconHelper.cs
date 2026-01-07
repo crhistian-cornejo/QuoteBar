@@ -32,7 +32,7 @@ public static class ProviderIconHelper
                 "droid" => "droid-white.svg",
                 "antigravity" => "antigravity.svg",
                 "zai" => "zai-white.svg",
-                "minimax" => "minimax.svg",
+                "minimax" => "minimax-white.svg",
                 _ => null
             };
         }
@@ -107,7 +107,7 @@ public static class ProviderIconHelper
         {
             Width = size,
             Height = size,
-            Source = new SvgImageSource(new Uri(iconPath)),
+            Source = new SvgImageSource(new Uri(iconPath, UriKind.Absolute)),
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center
         };

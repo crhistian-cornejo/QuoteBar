@@ -13,7 +13,6 @@ using NativeBar.WinUI.Core.Providers.Copilot;
 using NativeBar.WinUI.Core.Providers.Cursor;
 using NativeBar.WinUI.Core.Providers.Droid;
 using NativeBar.WinUI.Core.Providers.Gemini;
-using NativeBar.WinUI.Core.Providers.Minimax;
 using NativeBar.WinUI.Core.Providers.Zai;
 using NativeBar.WinUI.Core.Services;
 using NativeBar.WinUI.Settings.Controls;
@@ -84,7 +83,6 @@ public class ProvidersSettingsPage : ISettingsPage
             visibilityStack.Children.Add(CreateProviderToggle("Droid", "droid", "#EE6018"));
             visibilityStack.Children.Add(CreateProviderToggle("Antigravity", "antigravity", "#FF6B6B"));
             visibilityStack.Children.Add(CreateProviderToggle("z.ai", "zai", "#E85A6A"));
-            visibilityStack.Children.Add(CreateProviderToggle("Minimax", "minimax", "#00D1B2"));
 
             visibilityCard.Child = visibilityStack;
             stack.Children.Add(visibilityCard);
@@ -107,7 +105,6 @@ public class ProvidersSettingsPage : ISettingsPage
             stack.Children.Add(CreateProviderCardWithAutoDetect("Droid", "droid", "#EE6018"));
             stack.Children.Add(CreateProviderCardWithAutoDetect("Antigravity", "antigravity", "#FF6B6B"));
             stack.Children.Add(CreateZaiProviderCard());
-            stack.Children.Add(CreateMinimaxProviderCard());
 
             scroll.Content = stack;
             DebugLogger.Log("ProvidersSettingsPage", "CreateContent DONE");
@@ -146,7 +143,7 @@ public class ProvidersSettingsPage : ISettingsPage
                 {
                     Width = 18,
                     Height = 18,
-                    Source = new SvgImageSource(new Uri(svgPath)),
+                    Source = new SvgImageSource(new Uri(svgPath, UriKind.Absolute)),
                     VerticalAlignment = VerticalAlignment.Center
                 };
             }
@@ -509,9 +506,6 @@ public class ProvidersSettingsPage : ISettingsPage
                 case "zai":
                     ZaiSettingsReader.DeleteApiToken();
                     break;
-                case "minimax":
-                    MinimaxCredentialsStore.DeleteCredentials();
-                    break;
             }
             DebugLogger.Log("ProvidersSettingsPage", $"Disconnected {providerId}");
         }
@@ -692,7 +686,7 @@ public class ProvidersSettingsPage : ISettingsPage
             {
                 Width = 20,
                 Height = 20,
-                Source = new SvgImageSource(new Uri(svgPath)),
+                Source = new SvgImageSource(new Uri(svgPath, UriKind.Absolute)),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
             };
@@ -793,142 +787,6 @@ public class ProvidersSettingsPage : ISettingsPage
         return card;
     }
 
-    private Border CreateMinimaxProviderCard()
-    {
-        var hasApiKey = MinimaxCredentialsStore.HasCredentials();
-
-        var card = new Border
-        {
-            Background = new SolidColorBrush(_theme.CardColor),
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(16, 14, 16, 14),
-            Margin = new Thickness(0, 0, 0, 6),
-            BorderBrush = new SolidColorBrush(_theme.BorderColor),
-            BorderThickness = new Thickness(1)
-        };
-
-        var mainStack = new StackPanel { Spacing = 12 };
-
-        // Header row
-        var headerGrid = new Grid();
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-        var iconBorder = new Border
-        {
-            Width = 36,
-            Height = 36,
-            CornerRadius = new CornerRadius(8),
-            Background = new SolidColorBrush(ProviderIconHelper.ParseColor("#00D1B2"))
-        };
-        var svgPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icons", "minimax.svg");
-        if (System.IO.File.Exists(svgPath))
-        {
-            iconBorder.Child = new Image
-            {
-                Width = 20,
-                Height = 20,
-                Source = new SvgImageSource(new Uri(svgPath)),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-        }
-        Grid.SetColumn(iconBorder, 0);
-
-        var infoStack = new StackPanel
-        {
-            Margin = new Thickness(12, 0, 0, 0),
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        infoStack.Children.Add(new TextBlock
-        {
-            Text = "Minimax",
-            FontSize = 14,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
-        });
-
-        var statusStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        statusStack.Children.Add(new Ellipse
-        {
-            Width = 8,
-            Height = 8,
-            Fill = new SolidColorBrush(hasApiKey ? _theme.SuccessColor : _theme.SecondaryTextColor)
-        });
-        statusStack.Children.Add(new TextBlock
-        {
-            Text = hasApiKey ? "API key configured (secure)" : "Not configured",
-            FontSize = 12,
-            Foreground = new SolidColorBrush(_theme.SecondaryTextColor)
-        });
-        infoStack.Children.Add(statusStack);
-        Grid.SetColumn(infoStack, 1);
-
-        headerGrid.Children.Add(iconBorder);
-        headerGrid.Children.Add(infoStack);
-        mainStack.Children.Add(headerGrid);
-
-        // API key input section
-        var keySection = new StackPanel { Spacing = 10 };
-        var inputStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-
-        var keyTextBox = new TextBox
-        {
-            PlaceholderText = hasApiKey ? "Key saved - Enter new to replace" : "Paste your Minimax API key",
-            Width = 280,
-            Height = 32
-        };
-        inputStack.Children.Add(keyTextBox);
-
-        var saveButton = new Button
-        {
-            Content = "Save",
-            Padding = new Thickness(16, 4, 16, 4),
-            Background = new SolidColorBrush(_theme.AccentColor),
-            Foreground = new SolidColorBrush(Colors.White),
-            Height = 32
-        };
-        saveButton.Click += async (s, e) =>
-        {
-            var key = string.IsNullOrWhiteSpace(keyTextBox.Text) ? null : keyTextBox.Text;
-            var success = MinimaxCredentialsStore.StoreApiKey(key);
-
-            if (_content?.XamlRoot != null)
-            {
-                var dialog = new ContentDialog
-                {
-                    Title = success ? "Minimax API Key Saved" : "Error",
-                    Content = success
-                        ? (string.IsNullOrWhiteSpace(key)
-                            ? "API key cleared from secure storage."
-                            : "API key saved securely to Windows Credential Manager.")
-                        : "Failed to save API key.",
-                    CloseButtonText = "OK",
-                    XamlRoot = _content.XamlRoot
-                };
-                await dialog.ShowAsync();
-            }
-
-            keyTextBox.Text = "";
-            RequestRefresh?.Invoke();
-        };
-        inputStack.Children.Add(saveButton);
-        keySection.Children.Add(inputStack);
-
-        keySection.Children.Add(new TextBlock
-        {
-            Text = "Get your API key from platform.minimax.io\nKey is stored securely in Windows Credential Manager",
-            FontSize = 11,
-            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
-            TextWrapping = TextWrapping.Wrap,
-            Opacity = 0.7
-        });
-
-        mainStack.Children.Add(keySection);
-        card.Child = mainStack;
-
-        return card;
-    }
-
     private FrameworkElement CreateProviderCardIcon(string providerId, string name, string colorHex)
     {
         var isDark = _theme.IsDarkMode;
@@ -944,7 +802,7 @@ public class ProvidersSettingsPage : ISettingsPage
                     {
                         Width = 36,
                         Height = 36,
-                        Source = new SvgImageSource(new Uri(geminiSvgPath)),
+                        Source = new SvgImageSource(new Uri(geminiSvgPath, UriKind.Absolute)),
                         VerticalAlignment = VerticalAlignment.Center
                     };
                 }
@@ -966,7 +824,7 @@ public class ProvidersSettingsPage : ISettingsPage
                     {
                         Width = 24,
                         Height = 24,
-                        Source = new SvgImageSource(new Uri(cursorSvgPath)),
+                        Source = new SvgImageSource(new Uri(cursorSvgPath, UriKind.Absolute)),
                         HorizontalAlignment = HorizontalAlignment.Center,
                         VerticalAlignment = VerticalAlignment.Center
                     };
@@ -990,7 +848,7 @@ public class ProvidersSettingsPage : ISettingsPage
                     {
                         Width = 24,
                         Height = 24,
-                        Source = new SvgImageSource(new Uri(droidSvgPath)),
+                        Source = new SvgImageSource(new Uri(droidSvgPath, UriKind.Absolute)),
                         HorizontalAlignment = HorizontalAlignment.Center,
                         VerticalAlignment = VerticalAlignment.Center
                     };
@@ -1018,7 +876,7 @@ public class ProvidersSettingsPage : ISettingsPage
                     {
                         Width = 24,
                         Height = 24,
-                        Source = new SvgImageSource(new Uri(antigravitySvgPath)),
+                        Source = new SvgImageSource(new Uri(antigravitySvgPath, UriKind.Absolute)),
                         HorizontalAlignment = HorizontalAlignment.Center,
                         VerticalAlignment = VerticalAlignment.Center
                     };
@@ -1045,7 +903,7 @@ public class ProvidersSettingsPage : ISettingsPage
                         {
                             Width = 24,
                             Height = 24,
-                            Source = new SvgImageSource(new Uri(svgPath)),
+                    Source = new SvgImageSource(new Uri(svgPath, UriKind.Absolute)),
                             HorizontalAlignment = HorizontalAlignment.Center,
                             VerticalAlignment = VerticalAlignment.Center
                         };
