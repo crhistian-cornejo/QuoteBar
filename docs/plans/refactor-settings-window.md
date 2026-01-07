@@ -1,8 +1,8 @@
 # Plan: Refactorizar SettingsWindow.cs
 
-**Estado**: Pendiente  
+**Estado**: ✅ Completado  
 **Prioridad**: Media  
-**Archivo actual**: `NativeBar.WinUI/SettingsWindow.cs` (2207 líneas)
+**Archivo original**: `NativeBar.WinUI/SettingsWindow.cs` (2611 líneas → 454 líneas)
 
 ## Problema
 

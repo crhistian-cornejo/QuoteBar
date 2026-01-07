@@ -497,7 +497,11 @@ public class AntigravityLocalProbeStrategy : IProviderFetchStrategy
                     remainingFraction = rf.GetDouble();
 
                 if (quota.TryGetProperty("resetTime", out var rt))
-                    resetTime = ParseResetTime(rt.GetString());
+                {
+                    var resetTimeStr = rt.GetString();
+                    resetTime = ParseResetTime(resetTimeStr);
+                    DebugLogger.Log("Antigravity", $"Model {label}: resetTime raw='{resetTimeStr}' parsed={resetTime?.ToString("o")}");
+                }
             }
 
             quotas.Add(new ModelQuota(label, model, remainingFraction, resetTime));
@@ -572,11 +576,19 @@ public class AntigravityLocalProbeStrategy : IProviderFetchStrategy
     {
         if (string.IsNullOrEmpty(value)) return null;
 
+        // Try ISO8601 first
         if (DateTime.TryParse(value, out var dt))
-            return dt;
+            return dt.Kind == DateTimeKind.Unspecified ? DateTime.SpecifyKind(dt, DateTimeKind.Utc) : dt.ToUniversalTime();
 
         if (double.TryParse(value, out var epoch))
-            return DateTimeOffset.FromUnixTimeSeconds((long)epoch).UtcDateTime;
+        {
+            // Detect if value is in milliseconds (> 1e11) or seconds
+            // Timestamps after year 2001 in seconds are > 1e9, in milliseconds are > 1e12
+            if (epoch > 1e11) // Milliseconds
+                return DateTimeOffset.FromUnixTimeMilliseconds((long)epoch).UtcDateTime;
+            else // Seconds
+                return DateTimeOffset.FromUnixTimeSeconds((long)epoch).UtcDateTime;
+        }
 
         return null;
     }

@@ -1,62 +1,41 @@
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
 using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Media.Imaging;
-using Microsoft.UI.Xaml.Shapes;
-using NativeBar.WinUI.Core.Providers;
-using NativeBar.WinUI.Core.Providers.Claude;
-using NativeBar.WinUI.Core.Providers.Copilot;
-using NativeBar.WinUI.Core.Providers.Cursor;
-using NativeBar.WinUI.Core.Providers.Droid;
-using NativeBar.WinUI.Core.Providers.Gemini;
-using NativeBar.WinUI.Core.Providers.Minimax;
-using NativeBar.WinUI.Core.Providers.Zai;
 using NativeBar.WinUI.Core.Services;
-using System.Diagnostics;
-using System.IO;
-using System.Runtime.InteropServices;
+using NativeBar.WinUI.Settings;
+using NativeBar.WinUI.Settings.Pages;
 using Windows.Graphics;
+using Windows.System;
 using WinRT.Interop;
 
 namespace NativeBar.WinUI;
 
 /// <summary>
-/// Settings window with native Windows 11 styling and custom titlebar
+/// Settings window with native Windows 11 styling, integrated sidebar, and smooth transitions
 /// </summary>
 public sealed class SettingsWindow : Window
 {
     private readonly AppWindow _appWindow;
     private readonly ThemeService _theme = ThemeService.Instance;
-    private readonly SettingsService _settings = SettingsService.Instance;
     private Grid _rootGrid = null!;
-    private Grid _contentGrid = null!;
+    private Border _sidebarBorder = null!;
     private StackPanel _menuPanel = null!;
-    private ContentControl _contentArea = null!;
-    private Border _contentBorder = null!;
-    private Border _menuBorder = null!;
+    private Frame _contentFrame = null!;
     private string _currentPage = "General";
-    private string? _initialPage;
+    private readonly string? _initialPage;
 
-    // UI controls that need updating on theme change
-    private ComboBox? _themeCombo;
-    private ToggleSwitch? _accentToggle;
-    private ToggleSwitch? _compactToggle;
-    private ToggleSwitch? _iconsToggle;
-    private ToggleSwitch? _alertsToggle;
-    private Slider? _warningSlider;
-    private Slider? _criticalSlider;
-    private ToggleSwitch? _soundToggle;
-    private ToggleSwitch? _startupToggle;
-    private ComboBox? _intervalCombo;
-    private Slider? _hoverSlider;
-    private ToggleSwitch? _trayBadgeToggle;
-    private StackPanel? _trayBadgeProvidersPanel;
-    private ToggleSwitch? _hotkeyToggle;
-    private ComboBox? _hotkeyCombo;
+    // Page instances (lazy-loaded)
+    private GeneralSettingsPage? _generalPage;
+    private ProvidersSettingsPage? _providersPage;
+    private AppearanceSettingsPage? _appearancePage;
+    private NotificationsSettingsPage? _notificationsPage;
+    private AboutSettingsPage? _aboutPage;
 
     public SettingsWindow(string? initialPage = null)
     {
@@ -67,25 +46,19 @@ public sealed class SettingsWindow : Window
             _initialPage = initialPage;
             Title = "QuoteBar Settings";
 
-            // Configure window
             var hwnd = WindowNative.GetWindowHandle(this);
             var windowId = Win32Interop.GetWindowIdFromWindow(hwnd);
             _appWindow = AppWindow.GetFromWindowId(windowId);
 
-            // Build UI
             BuildUI();
-
-            // Configure window appearance
             ConfigureWindow();
 
-            // Set backdrop
             try
             {
                 SystemBackdrop = new MicaBackdrop { Kind = MicaKind.Base };
             }
             catch { }
 
-            // Listen for theme changes
             _theme.ThemeChanged += OnThemeChanged;
 
             DebugLogger.Log("SettingsWindow", "Constructor complete");
@@ -97,9 +70,6 @@ public sealed class SettingsWindow : Window
         }
     }
 
-    /// <summary>
-    /// Navigate to a specific settings page
-    /// </summary>
     public void NavigateToPage(string pageName)
     {
         SelectMenuItem(pageName);
@@ -109,46 +79,26 @@ public sealed class SettingsWindow : Window
     {
         try
         {
-            // Update root theme
-            if (_rootGrid != null)
+            if (_rootGrid != null) _rootGrid.RequestedTheme = theme;
+            if (_sidebarBorder != null)
             {
-                _rootGrid.RequestedTheme = theme;
+                _sidebarBorder.RequestedTheme = theme;
+                _sidebarBorder.Background = new SolidColorBrush(_theme.SurfaceColor);
             }
-            
-            // Update content grid theme
-            if (_contentGrid != null)
-            {
-                _contentGrid.RequestedTheme = theme;
-            }
-            
-            // Update content area theme
-            if (_contentBorder != null)
-            {
-                _contentBorder.RequestedTheme = theme;
-            }
-            
-            // Update content area control theme
-            if (_contentArea != null)
-            {
-                _contentArea.RequestedTheme = theme;
-            }
-            
-            // Update menu border theme and background
-            if (_menuBorder != null)
-            {
-                _menuBorder.RequestedTheme = theme;
-                _menuBorder.Background = new SolidColorBrush(_theme.SurfaceColor);
-            }
-            
-            // Refresh current page to update colors
-            ShowPage(_currentPage);
-            
-            // Update menu colors
+            if (_contentFrame != null) _contentFrame.RequestedTheme = theme;
+
+            _generalPage?.OnThemeChanged();
+            _providersPage?.OnThemeChanged();
+            _appearancePage?.OnThemeChanged();
+            _notificationsPage?.OnThemeChanged();
+            _aboutPage?.OnThemeChanged();
+
+            ShowPage(_currentPage, useTransition: false);
             UpdateMenuColors();
         }
         catch { }
     }
-    
+
     private void UpdateMenuColors()
     {
         foreach (var child in _menuPanel.Children)
@@ -156,18 +106,33 @@ public sealed class SettingsWindow : Window
             if (child is Border border && border.Tag != null)
             {
                 bool isSelected = border.Tag.ToString() == _currentPage;
-                border.Background = new SolidColorBrush(isSelected ? _theme.SelectedColor : Microsoft.UI.Colors.Transparent);
+                UpdateMenuItemVisual(border, isSelected);
+            }
+        }
+    }
 
-                if (border.Child is StackPanel stack)
+    private void UpdateMenuItemVisual(Border border, bool isSelected)
+    {
+        border.Background = new SolidColorBrush(isSelected ? _theme.SelectedColor : Colors.Transparent);
+
+        if (border.Child is Grid grid)
+        {
+            // Update indicator bar
+            if (grid.Children[0] is Border indicator)
+            {
+                indicator.Background = new SolidColorBrush(isSelected ? _theme.AccentColor : Colors.Transparent);
+            }
+            // Update icon and text
+            if (grid.Children[1] is StackPanel stack)
+            {
+                if (stack.Children[0] is FontIcon icon)
                 {
-                    if (stack.Children.Count > 0 && stack.Children[0] is FontIcon icon)
-                    {
-                        icon.Foreground = new SolidColorBrush(isSelected ? _theme.AccentColor : _theme.TextColor);
-                    }
-                    if (stack.Children.Count > 1 && stack.Children[1] is TextBlock text)
-                    {
-                        text.Foreground = new SolidColorBrush(_theme.TextColor);
-                    }
+                    icon.Foreground = new SolidColorBrush(isSelected ? _theme.AccentColor : _theme.TextColor);
+                }
+                if (stack.Children[1] is TextBlock text)
+                {
+                    text.Foreground = new SolidColorBrush(_theme.TextColor);
+                    text.FontWeight = isSelected ? Microsoft.UI.Text.FontWeights.SemiBold : Microsoft.UI.Text.FontWeights.Normal;
                 }
             }
         }
@@ -175,142 +140,124 @@ public sealed class SettingsWindow : Window
 
     private void BuildUI()
     {
+        _rootGrid = new Grid { RequestedTheme = _theme.CurrentTheme };
 
-        _rootGrid = new Grid
-        {
-            RequestedTheme = _theme.CurrentTheme
-        };
-
-        // Add XamlControlsResources to the root grid for MenuFlyout and other controls to work
         try
         {
-            var xamlControlsResources = new Microsoft.UI.Xaml.Controls.XamlControlsResources();
-            _rootGrid.Resources.MergedDictionaries.Add(xamlControlsResources);
+            _rootGrid.Resources.MergedDictionaries.Add(new XamlControlsResources());
         }
         catch (Exception ex)
         {
             DebugLogger.LogError("SettingsWindow", "Failed to add XamlControlsResources", ex);
         }
 
-        // Rows: TitleBar, Content
-        _rootGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(32) }); // Standard titlebar height
-        _rootGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        // Two columns: Sidebar (240px) + Content (*)
+        _rootGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(240) });
+        _rootGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        // Custom titlebar
-        var titleBar = CreateCustomTitleBar();
-        Grid.SetRow(titleBar, 0);
-        _rootGrid.Children.Add(titleBar);
-
-        // Content area with two columns
-        _contentGrid = new Grid
-        {
-            RequestedTheme = _theme.CurrentTheme
-        };
-        _contentGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
-        _contentGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        Grid.SetRow(_contentGrid, 1);
-
-        // Left menu panel
-        _menuBorder = new Border
+        // === LEFT SIDEBAR (includes titlebar area) ===
+        _sidebarBorder = new Border
         {
             Background = new SolidColorBrush(_theme.SurfaceColor),
-            Padding = new Thickness(8),
             RequestedTheme = _theme.CurrentTheme
         };
 
-        _menuPanel = new StackPanel { Spacing = 4 };
+        var sidebarStack = new StackPanel();
 
-        // Menu items
+        // Titlebar area in sidebar (48px height for custom titlebar)
+        var titleBarArea = CreateSidebarTitleBar();
+        sidebarStack.Children.Add(titleBarArea);
+
+        // Menu items with padding
+        _menuPanel = new StackPanel 
+        { 
+            Spacing = 2,
+            Margin = new Thickness(12, 8, 12, 12)
+        };
+
         _menuPanel.Children.Add(CreateMenuItem("General", "\uE713", true));
         _menuPanel.Children.Add(CreateMenuItem("Providers", "\uE774", false));
         _menuPanel.Children.Add(CreateMenuItem("Appearance", "\uE790", false));
         _menuPanel.Children.Add(CreateMenuItem("Notifications", "\uEA8F", false));
         _menuPanel.Children.Add(CreateMenuItem("About", "\uE946", false));
 
-        _menuBorder.Child = _menuPanel;
-        Grid.SetColumn(_menuBorder, 0);
+        sidebarStack.Children.Add(_menuPanel);
+        _sidebarBorder.Child = sidebarStack;
+        Grid.SetColumn(_sidebarBorder, 0);
 
-        // Right content area with background that respects theme
-        _contentBorder = new Border
+        // === RIGHT CONTENT AREA ===
+        var contentBorder = new Border
         {
+            // Subtle separator line on left
+            BorderBrush = new SolidColorBrush(_theme.BorderColor),
+            BorderThickness = new Thickness(1, 0, 0, 0)
+        };
+
+        // Use Frame for built-in navigation transitions
+        _contentFrame = new Frame
+        {
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
             RequestedTheme = _theme.CurrentTheme
         };
-        _contentArea = new ContentControl
+
+        // Wrap content in a ContentControl for manual content switching with animation
+        var contentControl = new ContentControl
         {
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             VerticalContentAlignment = VerticalAlignment.Stretch,
             RequestedTheme = _theme.CurrentTheme
         };
-        _contentBorder.Child = _contentArea;
-        Grid.SetColumn(_contentBorder, 1);
+        
+        contentBorder.Child = _contentFrame;
+        Grid.SetColumn(contentBorder, 1);
 
-        // Show initial page (use _initialPage if provided)
+        // Show initial page
         var startPage = _initialPage ?? "General";
         _currentPage = startPage;
-        ShowPage(startPage);
+        ShowPage(startPage, useTransition: false);
         UpdateMenuSelection(startPage);
 
-        _contentGrid.Children.Add(_menuBorder);
-        _contentGrid.Children.Add(_contentBorder);
-        _rootGrid.Children.Add(_contentGrid);
+        _rootGrid.Children.Add(_sidebarBorder);
+        _rootGrid.Children.Add(contentBorder);
 
         Content = _rootGrid;
     }
 
-    private void UpdateMenuSelection(string pageName)
-    {
-        foreach (var child in _menuPanel.Children)
-        {
-            if (child is Border border && border.Tag != null)
-            {
-                bool isSelected = border.Tag.ToString() == pageName;
-                border.Background = new SolidColorBrush(isSelected ? _theme.SelectedColor : Colors.Transparent);
-
-                if (border.Child is StackPanel stack && stack.Children.Count > 0 && stack.Children[0] is FontIcon icon)
-                {
-                    icon.Foreground = new SolidColorBrush(isSelected ? _theme.AccentColor : _theme.TextColor);
-                }
-            }
-        }
-    }
-
-    private Grid CreateCustomTitleBar()
+    private Grid CreateSidebarTitleBar()
     {
         var titleBarGrid = new Grid
         {
-            Background = new SolidColorBrush(Colors.Transparent),
-            Height = 32
+            Height = 48,
+            Margin = new Thickness(16, 0, 0, 8)
         };
 
-        titleBarGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // Icon
-        titleBarGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // Title
-        titleBarGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // Drag area
+        titleBarGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        titleBarGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        titleBarGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        // App icon - try to load PNG, fallback to FontIcon
+        // App icon
         FrameworkElement iconElement;
         try
         {
             var logoPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "LOGO-NATIVE.png");
             if (System.IO.File.Exists(logoPath))
             {
-                var image = new Image
+                iconElement = new Image
                 {
-                    Width = 16,
-                    Height = 16,
+                    Width = 18,
+                    Height = 18,
                     Source = new BitmapImage(new Uri(logoPath)),
-                    Margin = new Thickness(12, 0, 6, 0),
                     VerticalAlignment = VerticalAlignment.Center
                 };
-                iconElement = image;
             }
             else
             {
                 iconElement = new FontIcon
                 {
                     Glyph = "\uE9D9",
-                    FontSize = 14,
+                    FontSize = 16,
                     Foreground = new SolidColorBrush(_theme.AccentColor),
-                    Margin = new Thickness(12, 0, 6, 0),
                     VerticalAlignment = VerticalAlignment.Center
                 };
             }
@@ -320,74 +267,138 @@ public sealed class SettingsWindow : Window
             iconElement = new FontIcon
             {
                 Glyph = "\uE9D9",
-                FontSize = 14,
+                FontSize = 16,
                 Foreground = new SolidColorBrush(_theme.AccentColor),
-                Margin = new Thickness(12, 0, 6, 0),
                 VerticalAlignment = VerticalAlignment.Center
             };
         }
         Grid.SetColumn(iconElement, 0);
 
-        // Title text
         var titleText = new TextBlock
         {
-            Text = "QuoteBar Settings",
-            FontSize = 12,
+            Text = "Settings",
+            FontSize = 14,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 0, 0)
+            Margin = new Thickness(10, 0, 0, 0),
+            Foreground = new SolidColorBrush(_theme.TextColor)
         };
         Grid.SetColumn(titleText, 1);
 
-        // Drag region (rest of title bar)
-        var dragRegion = new Border { Background = new SolidColorBrush(Colors.Transparent) };
-        Grid.SetColumn(dragRegion, 2);
-
         titleBarGrid.Children.Add(iconElement);
         titleBarGrid.Children.Add(titleText);
-        titleBarGrid.Children.Add(dragRegion);
 
         return titleBarGrid;
     }
 
-    private Border CreateMenuItem(string text, string glyph, bool isSelected)
+    private Border CreateMenuItem(string name, string glyph, bool isSelected)
     {
         var border = new Border
         {
             Background = new SolidColorBrush(isSelected ? _theme.SelectedColor : Colors.Transparent),
             CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(12, 10, 12, 10),
-            Margin = new Thickness(4, 0, 4, 0),
-            Tag = text
+            Padding = new Thickness(0),
+            Tag = name,
+            Height = 40,
+            // Enable keyboard navigation
+            IsTabStop = true,
+            FocusVisualMargin = new Thickness(-2),
+            FocusVisualPrimaryThickness = new Thickness(2)
         };
 
-        var stack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+        // Set accessibility properties
+        AutomationProperties.SetName(border, $"{name} settings");
+        AutomationProperties.SetAutomationId(border, $"SettingsNav_{name}");
 
-        stack.Children.Add(new FontIcon
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3) }); // Indicator
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // Content
+
+        // Selection indicator bar
+        var indicator = new Border
+        {
+            Width = 3,
+            Height = 16,
+            CornerRadius = new CornerRadius(1.5),
+            Background = new SolidColorBrush(isSelected ? _theme.AccentColor : Colors.Transparent),
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Left
+        };
+        Grid.SetColumn(indicator, 0);
+
+        var stack = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 14,
+            Margin = new Thickness(12, 0, 12, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        var icon = new FontIcon
         {
             Glyph = glyph,
             FontSize = 16,
             Foreground = new SolidColorBrush(isSelected ? _theme.AccentColor : _theme.TextColor)
-        });
+        };
 
-        stack.Children.Add(new TextBlock
+        var text = new TextBlock
         {
-            Text = text,
+            Text = name,
             FontSize = 14,
+            FontWeight = isSelected ? Microsoft.UI.Text.FontWeights.SemiBold : Microsoft.UI.Text.FontWeights.Normal,
+            Foreground = new SolidColorBrush(_theme.TextColor),
             VerticalAlignment = VerticalAlignment.Center
-        });
+        };
 
-        border.Child = stack;
+        stack.Children.Add(icon);
+        stack.Children.Add(text);
+        Grid.SetColumn(stack, 1);
 
-        border.PointerPressed += (s, e) => SelectMenuItem(text);
+        grid.Children.Add(indicator);
+        grid.Children.Add(stack);
+        border.Child = grid;
+
+        border.PointerPressed += (s, e) => SelectMenuItem(name);
+
+        // Keyboard support
+        border.KeyDown += (s, e) =>
+        {
+            if (e.Key == VirtualKey.Enter || e.Key == VirtualKey.Space)
+            {
+                SelectMenuItem(name);
+                e.Handled = true;
+            }
+        };
+
+        // Focus state
+        border.GotFocus += (s, e) =>
+        {
+            if (border.Tag?.ToString() != _currentPage)
+            {
+                border.Background = new SolidColorBrush(_theme.HoverColor);
+            }
+        };
+        border.LostFocus += (s, e) =>
+        {
+            if (border.Tag?.ToString() != _currentPage)
+            {
+                border.Background = new SolidColorBrush(Colors.Transparent);
+            }
+        };
+
         border.PointerEntered += (s, e) =>
         {
             if (border.Tag?.ToString() != _currentPage)
+            {
                 border.Background = new SolidColorBrush(_theme.HoverColor);
+            }
         };
         border.PointerExited += (s, e) =>
         {
             if (border.Tag?.ToString() != _currentPage)
+            {
                 border.Background = new SolidColorBrush(Colors.Transparent);
+            }
         };
 
         return border;
@@ -395,2077 +406,145 @@ public sealed class SettingsWindow : Window
 
     private void SelectMenuItem(string pageName)
     {
+        if (_currentPage == pageName) return;
+        
         _currentPage = pageName;
+        UpdateMenuSelection(pageName);
+        ShowPage(pageName, useTransition: true);
+    }
 
+    private void UpdateMenuSelection(string pageName)
+    {
         foreach (var child in _menuPanel.Children)
         {
             if (child is Border border && border.Tag != null)
             {
                 bool isSelected = border.Tag.ToString() == pageName;
-                border.Background = new SolidColorBrush(isSelected ? _theme.SelectedColor : Colors.Transparent);
-
-                if (border.Child is StackPanel stack && stack.Children.Count > 0 && stack.Children[0] is FontIcon icon)
-                {
-                    icon.Foreground = new SolidColorBrush(isSelected ? _theme.AccentColor : _theme.TextColor);
-                }
+                UpdateMenuItemVisual(border, isSelected);
             }
         }
-
-        ShowPage(pageName);
     }
 
-    private void ShowPage(string pageName)
+    private void ShowPage(string pageName, bool useTransition)
     {
-        var content = pageName switch
-        {
-            "General" => CreateGeneralSettings(),
-            "Providers" => CreateProvidersSettings(),
-            "Appearance" => CreateAppearanceSettings(),
-            "Notifications" => CreateNotificationsSettings(),
-            "About" => CreateAboutSettings(),
-            _ => CreateGeneralSettings()
-        };
-
-        // Ensure content respects theme
-        content.RequestedTheme = _theme.CurrentTheme;
-        _contentArea.Content = content;
-    }
-
-    private ScrollViewer CreateGeneralSettings()
-    {
-        var scroll = new ScrollViewer { Padding = new Thickness(24) };
-        var stack = new StackPanel { Spacing = 16 };
-
-        stack.Children.Add(CreateHeader("General Settings"));
-
-        // Start at login - uses Windows Registry
-        var isStartupEnabled = StartupService.IsStartupEnabled();
-        _startupToggle = CreateToggleSwitch(isStartupEnabled);
-        _startupToggle.Toggled += async (s, e) =>
-        {
-            var success = StartupService.SetStartupEnabled(_startupToggle.IsOn);
-            _settings.Settings.StartAtLogin = _startupToggle.IsOn;
-            _settings.Save();
-
-            if (!success)
-            {
-                var dialog = new ContentDialog
-                {
-                    Title = "Error",
-                    Content = "Failed to update startup setting. You may need to run as administrator.",
-                    CloseButtonText = "OK",
-                    XamlRoot = Content.XamlRoot
-                };
-                await dialog.ShowAsync();
-                // Revert toggle
-                _startupToggle.IsOn = !_startupToggle.IsOn;
-            }
-        };
-        stack.Children.Add(CreateSettingCard(
-            "Start at login",
-            "Automatically start QuoteBar when you log in to Windows",
-            _startupToggle));
-
-        // Refresh interval
-        _intervalCombo = new ComboBox { Width = 150 };
-        _intervalCombo.Items.Add("1 minute");
-        _intervalCombo.Items.Add("5 minutes");
-        _intervalCombo.Items.Add("15 minutes");
-        _intervalCombo.Items.Add("30 minutes");
-        _intervalCombo.SelectedIndex = _settings.Settings.RefreshIntervalMinutes switch
-        {
-            1 => 0, 5 => 1, 15 => 2, 30 => 3, _ => 1
-        };
-        _intervalCombo.SelectionChanged += (s, e) =>
-        {
-            _settings.Settings.RefreshIntervalMinutes = _intervalCombo.SelectedIndex switch
-            {
-                0 => 1, 1 => 5, 2 => 15, 3 => 30, _ => 5
-            };
-            _settings.Save();
-        };
-        stack.Children.Add(CreateSettingCard(
-            "Refresh interval",
-            "How often to check for usage updates",
-            _intervalCombo));
-
-        // Hover delay with value display
-        var hoverPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
-        _hoverSlider = new Slider
-        {
-            Minimum = 100,
-            Maximum = 1000,
-            Value = _settings.Settings.HoverDelayMs,
-            Width = 150,
-            StepFrequency = 50
-        };
-        var hoverValueText = new TextBlock
-        {
-            Text = $"{_settings.Settings.HoverDelayMs}ms",
-            VerticalAlignment = VerticalAlignment.Center,
-            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
-            MinWidth = 50
-        };
-        _hoverSlider.ValueChanged += (s, e) =>
-        {
-            var value = (int)_hoverSlider.Value;
-            _settings.Settings.HoverDelayMs = value;
-            hoverValueText.Text = $"{value}ms";
-            _settings.Save();
-        };
-        hoverPanel.Children.Add(_hoverSlider);
-        hoverPanel.Children.Add(hoverValueText);
-        stack.Children.Add(CreateSettingCard(
-            "Hover delay",
-            "Delay before showing popup on hover",
-            hoverPanel));
-
-        // Keyboard shortcuts section
-        stack.Children.Add(CreateHeader("Keyboard Shortcuts", topMargin: 24));
-
-        // Global hotkey enable/disable
-        _hotkeyToggle = CreateToggleSwitch(_settings.Settings.HotkeyEnabled);
-        _hotkeyToggle.Toggled += (s, e) =>
-        {
-            _settings.Settings.HotkeyEnabled = _hotkeyToggle.IsOn;
-            _settings.Save();
-            // TODO: Notify HotkeyService to enable/disable
-        };
-        stack.Children.Add(CreateSettingCard(
-            "Enable global hotkey",
-            "Use a keyboard shortcut to toggle the popup from anywhere",
-            _hotkeyToggle));
-
-        // Hotkey selection
-        _hotkeyCombo = new ComboBox { Width = 180 };
-        _hotkeyCombo.Items.Add("Win + Shift + Q");
-        _hotkeyCombo.Items.Add("Win + Alt + Q");
-        _hotkeyCombo.Items.Add("Ctrl + Alt + Q");
-        _hotkeyCombo.Items.Add("Win + Shift + U");
-        _hotkeyCombo.Items.Add("Win + `");
-        
-        // Set current selection based on settings
-        var currentHotkey = _settings.Settings.HotkeyDisplayString ?? "Win + Shift + Q";
-        _hotkeyCombo.SelectedIndex = currentHotkey switch
-        {
-            "Win + Shift + Q" => 0,
-            "Win + Alt + Q" => 1,
-            "Ctrl + Alt + Q" => 2,
-            "Win + Shift + U" => 3,
-            "Win + `" => 4,
-            _ => 0
-        };
-        
-        _hotkeyCombo.SelectionChanged += (s, e) =>
-        {
-            var selected = _hotkeyCombo.SelectedItem?.ToString() ?? "Win + Shift + Q";
-            _settings.Settings.HotkeyDisplayString = selected;
-            
-            // Parse and save individual components
-            var (modifiers, key) = ParseHotkeyString(selected);
-            _settings.Settings.HotkeyModifiers = modifiers;
-            _settings.Settings.HotkeyKey = key;
-            _settings.Save();
-            // TODO: Notify HotkeyService to re-register with new binding
-        };
-        
-        stack.Children.Add(CreateSettingCard(
-            "Global hotkey",
-            "Keyboard shortcut to toggle the popup",
-            _hotkeyCombo));
-
-        // Shortcuts reference
-        var shortcutsInfo = new TextBlock
-        {
-            Text = "Popup shortcuts: 1-9 (switch provider), R (refresh), D (dashboard), S (settings), P (pin), ? (help)",
-            FontSize = 12,
-            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
-            TextWrapping = TextWrapping.Wrap
-        };
-        stack.Children.Add(shortcutsInfo);
-
-        scroll.Content = stack;
-        return scroll;
-    }
-
-    private ScrollViewer CreateProvidersSettings()
-    {
-        DebugLogger.Log("SettingsWindow", "CreateProvidersSettings START");
         try
         {
-            var scroll = new ScrollViewer { Padding = new Thickness(24) };
-            var stack = new StackPanel { Spacing = 16 };
+            DebugLogger.Log("SettingsWindow", $"ShowPage: {pageName}");
 
-            stack.Children.Add(CreateHeader("Providers"));
-            stack.Children.Add(CreateSubheader("Choose which providers to show in the popup and configure their settings"));
-
-            DebugLogger.Log("SettingsWindow", "CreateProvidersSettings: Creating visibility card");
-            // Provider visibility section
-            var visibilityCard = new Border
+            FrameworkElement pageContent;
+            try
             {
-                Background = new SolidColorBrush(_theme.CardColor),
-                CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(16),
-                Margin = new Thickness(0, 0, 0, 16)
-            };
-
-            var visibilityStack = new StackPanel { Spacing = 12 };
-            visibilityStack.Children.Add(new TextBlock
-            {
-                Text = "Show in popup",
-                FontSize = 14,
-                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                Margin = new Thickness(0, 0, 0, 8)
-            });
-
-            // Provider toggles
-            DebugLogger.Log("SettingsWindow", "CreateProvidersSettings: Creating provider toggles");
-            visibilityStack.Children.Add(CreateProviderToggle("Codex", "codex", "#7C3AED"));
-            visibilityStack.Children.Add(CreateProviderToggle("Claude", "claude", "#D97757"));
-            visibilityStack.Children.Add(CreateProviderToggle("Cursor", "cursor", "#007AFF"));
-            visibilityStack.Children.Add(CreateProviderToggle("Gemini", "gemini", "#4285F4"));
-            visibilityStack.Children.Add(CreateProviderToggle("Copilot", "copilot", "#24292F"));
-            visibilityStack.Children.Add(CreateProviderToggle("Droid", "droid", "#EE6018"));
-            visibilityStack.Children.Add(CreateProviderToggle("Antigravity", "antigravity", "#FF6B6B"));
-            visibilityStack.Children.Add(CreateProviderToggle("z.ai", "zai", "#E85A6A"));
-
-            visibilityCard.Child = visibilityStack;
-            stack.Children.Add(visibilityCard);
-
-            // Separator
-            stack.Children.Add(new TextBlock
-            {
-                Text = "Provider Configuration",
-                FontSize = 16,
-                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                Margin = new Thickness(0, 8, 0, 8)
-            });
-
-            // Provider cards - using dynamic status detection
-            DebugLogger.Log("SettingsWindow", "CreateProvidersSettings: Creating Codex card");
-            stack.Children.Add(CreateProviderCardWithAutoDetect("Codex", "codex", "#7C3AED"));
-            DebugLogger.Log("SettingsWindow", "CreateProvidersSettings: Creating Claude card");
-            stack.Children.Add(CreateProviderCardWithAutoDetect("Claude", "claude", "#D97757"));
-            DebugLogger.Log("SettingsWindow", "CreateProvidersSettings: Creating Cursor card");
-            stack.Children.Add(CreateProviderCardWithAutoDetect("Cursor", "cursor", "#007AFF"));
-            DebugLogger.Log("SettingsWindow", "CreateProvidersSettings: Creating Gemini card");
-            stack.Children.Add(CreateProviderCardWithAutoDetect("Gemini", "gemini", "#4285F4"));
-            DebugLogger.Log("SettingsWindow", "CreateProvidersSettings: Creating Copilot card");
-            stack.Children.Add(CreateProviderCardWithAutoDetect("Copilot", "copilot", "#24292F"));
-            DebugLogger.Log("SettingsWindow", "CreateProvidersSettings: Creating Droid card");
-            stack.Children.Add(CreateProviderCardWithAutoDetect("Droid", "droid", "#EE6018"));
-            DebugLogger.Log("SettingsWindow", "CreateProvidersSettings: Creating Antigravity card");
-            stack.Children.Add(CreateProviderCardWithAutoDetect("Antigravity", "antigravity", "#FF6B6B"));
-            DebugLogger.Log("SettingsWindow", "CreateProvidersSettings: Creating Zai card");
-            stack.Children.Add(CreateZaiProviderCard());
-
-            DebugLogger.Log("SettingsWindow", "CreateProvidersSettings DONE");
-            scroll.Content = stack;
-            return scroll;
-        }
-        catch (Exception ex)
-        {
-            DebugLogger.LogError("SettingsWindow", "CreateProvidersSettings CRASHED", ex);
-            // Return empty scroll to avoid crash
-            var errorScroll = new ScrollViewer { Padding = new Thickness(24) };
-            var errorStack = new StackPanel();
-            errorStack.Children.Add(new TextBlock { Text = $"Error loading providers: {ex.Message}", Foreground = new SolidColorBrush(Microsoft.UI.Colors.Red) });
-            errorScroll.Content = errorStack;
-            return errorScroll;
-        }
-    }
-
-    private Grid CreateProviderToggle(string displayName, string providerId, string colorHex)
-    {
-        var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        // Provider icon (SVG without background)
-        FrameworkElement iconElement;
-        var svgFileName = GetProviderSvgFileName(providerId);
-        if (!string.IsNullOrEmpty(svgFileName))
-        {
-            var svgPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icons", svgFileName);
-            if (System.IO.File.Exists(svgPath))
-            {
-                iconElement = new Image
+                ISettingsPage page = pageName switch
                 {
-                    Width = 18,
-                    Height = 18,
-                    Source = new SvgImageSource(new Uri(svgPath)),
-                    VerticalAlignment = VerticalAlignment.Center
+                    "General" => _generalPage ??= new GeneralSettingsPage(),
+                    "Providers" => GetProvidersPage(),
+                    "Appearance" => GetAppearancePage(),
+                    "Notifications" => _notificationsPage ??= new NotificationsSettingsPage(),
+                    "About" => _aboutPage ??= new AboutSettingsPage(),
+                    _ => _generalPage ??= new GeneralSettingsPage()
+                };
+
+                pageContent = page.Content;
+            }
+            catch (Exception pageEx)
+            {
+                DebugLogger.LogError("SettingsWindow", $"Page creation failed for {pageName}", pageEx);
+                pageContent = new TextBlock
+                {
+                    Text = $"Error loading {pageName}: {pageEx.Message}",
+                    Foreground = new SolidColorBrush(Colors.Red),
+                    Margin = new Thickness(24),
+                    TextWrapping = TextWrapping.Wrap
                 };
             }
-            else
+
+            if (pageContent != null)
             {
-                // Fallback to color dot
-                iconElement = new Ellipse
+                pageContent.RequestedTheme = _theme.CurrentTheme;
+
+                if (useTransition)
                 {
-                    Width = 12,
-                    Height = 12,
-                    Fill = new SolidColorBrush(ParseColor(colorHex)),
-                    VerticalAlignment = VerticalAlignment.Center
-                };
-            }
-        }
-        else
-        {
-            // No SVG available, use color dot
-            iconElement = new Ellipse
-            {
-                Width = 12,
-                Height = 12,
-                Fill = new SolidColorBrush(ParseColor(colorHex)),
-                VerticalAlignment = VerticalAlignment.Center
-            };
-        }
-        Grid.SetColumn(iconElement, 0);
-
-        // Name
-        var nameText = new TextBlock
-        {
-            Text = displayName,
-            FontSize = 14,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(12, 0, 0, 0)
-        };
-        Grid.SetColumn(nameText, 1);
-
-        // Toggle
-        var toggle = new ToggleSwitch
-        {
-            IsOn = _settings.Settings.IsProviderEnabled(providerId),
-            OnContent = "",
-            OffContent = "",
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        toggle.Toggled += (s, e) =>
-        {
-            _settings.Settings.SetProviderEnabled(providerId, toggle.IsOn);
-            _settings.Save();
-        };
-        Grid.SetColumn(toggle, 2);
-
-        grid.Children.Add(iconElement);
-        grid.Children.Add(nameText);
-        grid.Children.Add(toggle);
-
-        return grid;
-    }
-
-    private Border CreateProviderCard(string name, string providerId, string colorHex, bool isConnected, string status)
-    {
-        var card = new Border
-        {
-            Background = new SolidColorBrush(_theme.CardColor),
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(16),
-            Margin = new Thickness(0, 0, 0, 8)
-        };
-
-        var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        // Icon - custom styling per provider
-        FrameworkElement iconElement = CreateProviderCardIcon(providerId, name, colorHex);
-
-        Grid.SetColumn(iconElement, 0);
-
-        // Info
-        var infoStack = new StackPanel
-        {
-            Margin = new Thickness(12, 0, 0, 0),
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        infoStack.Children.Add(new TextBlock
-        {
-            Text = name,
-            FontSize = 14,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
-        });
-
-        var statusStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        statusStack.Children.Add(new Ellipse
-        {
-            Width = 8,
-            Height = 8,
-            Fill = new SolidColorBrush(isConnected ? _theme.SuccessColor : _theme.SecondaryTextColor)
-        });
-        statusStack.Children.Add(new TextBlock
-        {
-            Text = status,
-            FontSize = 12,
-            Foreground = new SolidColorBrush(_theme.SecondaryTextColor)
-        });
-        infoStack.Children.Add(statusStack);
-        Grid.SetColumn(infoStack, 1);
-
-        // Configure/Connect button with dropdown for connected providers
-        FrameworkElement buttonElement;
-
-        if (isConnected)
-        {
-            // Create a dropdown menu for connected providers
-            var menuFlyout = new MenuFlyout();
-
-            // Refresh Data option
-            var refreshItem = new MenuFlyoutItem { Text = "Refresh Data", Icon = new FontIcon { Glyph = "\uE72C" } };
-            refreshItem.Click += async (s, e) =>
-            {
-                try
-                {
-                    var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
-                    if (usageStore != null)
+                    // Apply entrance animation
+                    var transition = new EntranceThemeTransition
                     {
-                        await usageStore.RefreshAsync(providerId);
-                        DispatcherQueue?.TryEnqueue(() => ShowPage("Providers"));
+                        FromHorizontalOffset = 40,
+                        FromVerticalOffset = 0
+                    };
+                    
+                    if (pageContent is Panel panel)
+                    {
+                        panel.ChildrenTransitions = [transition];
                     }
                 }
-                catch (Exception ex)
-                {
-                    DebugLogger.LogError("SettingsWindow", $"Refresh failed for {providerId}", ex);
-                }
-            };
-            menuFlyout.Items.Add(refreshItem);
 
-            menuFlyout.Items.Add(new MenuFlyoutSeparator());
-
-            // Disconnect option
-            var disconnectItem = new MenuFlyoutItem
-            {
-                Text = "Disconnect",
-                Icon = new FontIcon { Glyph = "\uE7E8" }
-            };
-            disconnectItem.Click += async (s, e) =>
-            {
-                var confirmDialog = new ContentDialog
-                {
-                    Title = $"Disconnect {name}?",
-                    Content = $"This will clear stored credentials for {name}.",
-                    PrimaryButtonText = "Disconnect",
-                    CloseButtonText = "Cancel",
-                    DefaultButton = ContentDialogButton.Close,
-                    XamlRoot = Content.XamlRoot
-                };
-
-                var result = await confirmDialog.ShowAsync();
-                if (result == ContentDialogResult.Primary)
-                {
-                    DisconnectProvider(providerId);
-                    DispatcherQueue?.TryEnqueue(() => ShowPage("Providers"));
-                }
-            };
-            menuFlyout.Items.Add(disconnectItem);
-
-            var configButton = new Button
-            {
-                Content = "Options ▾",
-                Padding = new Thickness(12, 6, 12, 6),
-                Flyout = menuFlyout
-            };
-            buttonElement = configButton;
-        }
-        else
-        {
-            // Connect button for not connected providers
-            var connectButton = new Button
-            {
-                Content = "Connect",
-                Padding = new Thickness(16, 8, 16, 8),
-                Background = new SolidColorBrush(_theme.AccentColor),
-                Foreground = new SolidColorBrush(Colors.White)
-            };
-            
-            connectButton.Click += async (s, e) =>
-            {
-                await ShowConnectDialogAsync(name, providerId);
-            };
-            buttonElement = connectButton;
-        }
-
-        Grid.SetColumn(buttonElement, 2);
-
-        grid.Children.Add(iconElement);
-        grid.Children.Add(infoStack);
-        grid.Children.Add(buttonElement);
-        card.Child = grid;
-
-        return card;
-    }
-
-    /// <summary>
-    /// Shows a connect dialog with provider-specific instructions
-    /// </summary>
-    private async Task ShowConnectDialogAsync(string name, string providerId)
-    {
-        // Special handling for providers with OAuth login windows
-        if (providerId.ToLower() == "copilot")
-        {
-            await LaunchCopilotLoginAsync();
-            return;
-        }
-
-        if (providerId.ToLower() == "cursor")
-        {
-            await LaunchCursorLoginAsync();
-            return;
-        }
-
-        if (providerId.ToLower() == "droid")
-        {
-            await LaunchDroidLoginAsync();
-            return;
-        }
-
-        string instructions = providerId.ToLower() switch
-        {
-            
-            "gemini" => "To connect Gemini:\n\n" +
-                        "1. Install the Gemini CLI: npm install -g @anthropic-ai/gemini-cli\n" +
-                        "2. Run: gemini auth login\n" +
-                        "3. Complete the OAuth flow in your browser\n" +
-                        "4. Come back here and click 'Retry Detection'",
-            
-            "codex" => "To connect Codex:\n\n" +
-                       "1. Install the Codex CLI\n" +
-                       "2. Run: codex auth login\n" +
-                       "3. Come back here and click 'Retry Detection'",
-            
-            "claude" => "To connect Claude:\n\n" +
-                        "1. Install the Claude CLI: npm install -g @anthropic-ai/claude-cli\n" +
-                        "2. Run: claude auth login\n" +
-                        "3. Complete the OAuth flow in your browser\n" +
-                        "4. Come back here and click 'Retry Detection'",
-            
-            "droid" => "To connect Droid:\n\n" +
-                       "1. Install the Droid CLI\n" +
-                       "2. Make sure 'droid --version' works in terminal\n" +
-                       "3. Come back here and click 'Retry Detection'",
-            
-            "antigravity" => "To connect Antigravity:\n\n" +
-                             "1. Launch Antigravity IDE\n" +
-                             "2. Make sure it's running and logged in\n" +
-                             "3. Come back here and click 'Retry Detection'\n\n" +
-                             "The app will automatically detect Antigravity when it's running.",
-            
-            _ => $"Configuration instructions for {name} are not yet available."
-        };
-        
-        var dialog = new ContentDialog
-        {
-            Title = $"Connect {name}",
-            Content = new TextBlock 
-            { 
-                Text = instructions, 
-                TextWrapping = TextWrapping.Wrap,
-                MaxWidth = 400
-            },
-            PrimaryButtonText = "Retry Detection",
-            CloseButtonText = "Close",
-            XamlRoot = Content.XamlRoot
-        };
-        
-        var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Primary)
-        {
-            // Force refresh usage data for this provider
-            var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
-            if (usageStore != null)
-            {
-                try
-                {
-                    await usageStore.RefreshAsync(providerId);
-                }
-                catch (Exception ex)
-                {
-                    DebugLogger.LogError("SettingsWindow", $"RefreshAsync failed for {providerId}", ex);
-                }
+                _contentFrame.Content = pageContent;
             }
-
-            // Use DispatcherQueue to refresh page after dialog fully closes
-            DispatcherQueue?.TryEnqueue(() =>
-            {
-                try
-                {
-                    ShowPage("Providers");
-                }
-                catch (Exception ex)
-                {
-                    DebugLogger.LogError("SettingsWindow", $"ShowPage failed after Retry Detection", ex);
-                }
-            });
-        }
-    }
-
-    /// <summary>
-    /// Disconnects a provider by clearing its stored credentials
-    /// </summary>
-    private void DisconnectProvider(string providerId)
-    {
-        try
-        {
-            switch (providerId.ToLower())
-            {
-                case "cursor":
-                    CursorSessionStore.ClearSession();
-                    break;
-                    
-                case "claude":
-                    // Clear Claude OAuth credentials
-                    var claudePath = System.IO.Path.Combine(
-                        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                        ".claude", "credentials.json");
-                    if (File.Exists(claudePath))
-                        File.Delete(claudePath);
-                    break;
-                    
-                case "gemini":
-                    // Clear Gemini OAuth credentials
-                    var geminiPath = System.IO.Path.Combine(
-                        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                        ".gemini", "credentials.json");
-                    if (File.Exists(geminiPath))
-                        File.Delete(geminiPath);
-                    break;
-                    
-                case "copilot":
-                    // Note: gh CLI credentials are managed by gh, just clear our cache
-                    break;
-                    
-                case "zai":
-                    ZaiSettingsReader.DeleteApiToken();
-                    break;
-            }
-            
-            DebugLogger.Log("SettingsWindow", $"DisconnectProvider: Disconnected {providerId}");
         }
         catch (Exception ex)
         {
-            DebugLogger.LogError("SettingsWindow", $"DisconnectProvider error ({providerId})", ex);
+            DebugLogger.LogError("SettingsWindow", $"ShowPage ERROR for {pageName}", ex);
         }
     }
 
-    /// <summary>
-    /// Gets details content for a connected provider
-    /// </summary>
-    private FrameworkElement GetProviderDetailsContent(string providerId)
+    private ProvidersSettingsPage GetProvidersPage()
     {
-        var stack = new StackPanel { Spacing = 8 };
-        
-        var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
-        var snapshot = usageStore?.GetSnapshot(providerId);
-        
-        if (snapshot != null && snapshot.ErrorMessage == null)
+        if (_providersPage == null)
         {
-            if (snapshot.Identity?.PlanType != null)
+            _providersPage = new ProvidersSettingsPage();
+            _providersPage.SetDispatcherQueue(DispatcherQueue);
+            _providersPage.RequestRefresh += () =>
             {
-                stack.Children.Add(new TextBlock 
-                { 
-                    Text = $"Plan: {snapshot.Identity.PlanType}",
-                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
-                });
-            }
-            
-            if (snapshot.Primary != null)
-            {
-                stack.Children.Add(new TextBlock 
-                { 
-                    Text = $"Primary Usage: {snapshot.Primary.UsedPercent:F1}%"
-                });
-            }
-            
-            if (snapshot.Secondary != null)
-            {
-                stack.Children.Add(new TextBlock 
-                { 
-                    Text = $"Secondary Usage: {snapshot.Secondary.UsedPercent:F1}%"
-                });
-            }
-            
-            stack.Children.Add(new TextBlock 
-            { 
-                Text = $"Last Updated: {snapshot.FetchedAt:g}",
-                Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
-                FontSize = 12
-            });
-        }
-        else
-        {
-            stack.Children.Add(new TextBlock 
-            { 
-                Text = snapshot?.ErrorMessage ?? "No data available"
-            });
-        }
-        
-        return stack;
-    }
-
-    /// <summary>
-    /// Creates a provider card with automatic status detection based on UsageStore data.
-    /// Detection is done asynchronously to avoid blocking the UI.
-    /// </summary>
-    private Border CreateProviderCardWithAutoDetect(string name, string providerId, string colorHex)
-    {
-        try
-        {
-            DebugLogger.Log("SettingsWindow", $"CreateProviderCardWithAutoDetect: {providerId} START");
-            // First check cached/quick status (UsageStore, session stores - no blocking)
-            var (isConnected, status) = GetProviderStatusFast(providerId);
-            DebugLogger.Log("SettingsWindow", $"CreateProviderCardWithAutoDetect: {providerId} status={status}, connected={isConnected}");
-            var card = CreateProviderCard(name, providerId, colorHex, isConnected, status);
-            DebugLogger.Log("SettingsWindow", $"CreateProviderCardWithAutoDetect: {providerId} card created");
-
-            // If not connected via fast check, schedule async CLI detection
-            if (!isConnected)
-            {
-                // Run CLI detection in background and update card
-                _ = DetectProviderCLIAsync(card, name, providerId, colorHex);
-            }
-
-            return card;
-        }
-        catch (Exception ex)
-        {
-            DebugLogger.LogError("SettingsWindow", $"CreateProviderCardWithAutoDetect({providerId}) CRASHED", ex);
-            // Return empty border to avoid crash
-            return new Border
-            {
-                Background = new SolidColorBrush(_theme.CardColor),
-                CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(16),
-                Child = new TextBlock { Text = $"Error loading {name}: {ex.Message}", Foreground = new SolidColorBrush(Microsoft.UI.Colors.Red) }
-            };
-        }
-    }
-
-    /// <summary>
-    /// Async CLI detection that updates the card when complete
-    /// </summary>
-    private async Task DetectProviderCLIAsync(Border card, string name, string providerId, string colorHex)
-    {
-        try
-        {
-            var (isConnected, status) = await Task.Run(() => GetProviderStatusWithCLI(providerId));
-
-            if (isConnected && DispatcherQueue != null)
-            {
-                // Update the card on UI thread
-                DispatcherQueue.TryEnqueue(() =>
+                DispatcherQueue?.TryEnqueue(() =>
                 {
-                    try
+                    if (_currentPage == "Providers")
                     {
-                        // Check if we're still on the Providers page
-                        if (_currentPage != "Providers") return;
-
-                        // Check if card is still in the visual tree
-                        if (card.Parent is not Panel panel) return;
-
-                        var index = panel.Children.IndexOf(card);
-                        if (index < 0) return;
-
-                        var newCard = CreateProviderCard(name, providerId, colorHex, isConnected, status);
-                        panel.Children.RemoveAt(index);
-                        panel.Children.Insert(index, newCard);
-                    }
-                    catch (Exception ex)
-                    {
-                        DebugLogger.LogError("SettingsWindow", $"DetectProviderCLIAsync UI update ({providerId}) error", ex);
+                        _providersPage.Refresh();
+                        _contentFrame.Content = _providersPage.Content;
                     }
                 });
-            }
-        }
-        catch (Exception ex)
-        {
-            DebugLogger.LogError("SettingsWindow", $"DetectProviderCLIAsync({providerId}) error", ex);
-        }
-    }
-
-    /// <summary>
-    /// Fast provider status detection - only checks cached data, session stores, and credentials.
-    /// Does NOT run any CLI commands to avoid blocking the UI.
-    /// </summary>
-    private (bool isConnected, string status) GetProviderStatusFast(string providerId)
-    {
-        try
-        {
-            // First check if we have successful usage data in the store
-            var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
-            var snapshot = usageStore?.GetSnapshot(providerId);
-
-            if (snapshot != null && snapshot.ErrorMessage == null && !snapshot.IsLoading && snapshot.Primary != null)
-            {
-                // We have actual data - provider is connected
-                var planInfo = snapshot.Identity?.PlanType ?? "Connected";
-                return (true, planInfo);
-            }
-
-            // Check provider-specific fast detection methods (no CLI calls)
-            switch (providerId.ToLower())
-            {
-                case "claude":
-                    var claudeCredentials = ClaudeOAuthCredentialsStore.TryLoad();
-                    if (claudeCredentials != null && !claudeCredentials.IsExpired)
-                        return (true, "OAuth connected");
-                    break;
-
-                case "cursor":
-                    if (CursorSessionStore.HasSession())
-                        return (true, "Session stored");
-                    break;
-
-                case "gemini":
-                    if (GeminiOAuthCredentialsStore.HasValidCredentials())
-                        return (true, "OAuth connected");
-                    break;
-
-                case "copilot":
-                    var copilotCredentials = CopilotOAuthCredentialsStore.TryLoad();
-                    if (copilotCredentials != null && !copilotCredentials.IsExpired)
-                        return (true, "GitHub OAuth connected");
-                    break;
-
-                case "zai":
-                    if (ZaiSettingsReader.HasApiToken())
-                        return (true, "API token configured");
-                    break;
-            }
-
-            // Return "Checking..." for providers that need CLI detection
-            var needsCLICheck = providerId.ToLower() switch
-            {
-                "codex" => true,
-                "claude" => true,  // May have CLI instead of OAuth
-                "gemini" => true,  // May have CLI instead of OAuth
-                "copilot" => true, // May have gh CLI
-                "droid" => true,
-                _ => false
-            };
-
-            return (false, needsCLICheck ? "Checking..." : "Not configured");
-        }
-        catch (Exception ex)
-        {
-            DebugLogger.LogError("SettingsWindow", $"GetProviderStatusFast({providerId}) error", ex);
-            return (false, "Not configured");
-        }
-    }
-
-    /// <summary>
-    /// Slow provider status detection - checks CLI availability.
-    /// Should be called from a background thread.
-    /// </summary>
-    private (bool isConnected, string status) GetProviderStatusWithCLI(string providerId)
-    {
-        try
-        {
-            switch (providerId.ToLower())
-            {
-                case "codex":
-                    if (CanDetectCLI("codex", "--version"))
-                        return (true, "CLI detected");
-                    break;
-
-                case "claude":
-                    if (CanDetectCLI("claude", "--version"))
-                        return (true, "CLI detected");
-                    break;
-
-                case "gemini":
-                    if (CanDetectCLI("gemini", "--version"))
-                        return (true, "CLI detected");
-                    break;
-
-                case "copilot":
-                    if (CanDetectCLI("gh", "auth status"))
-                        return (true, "GitHub CLI authenticated");
-                    break;
-
-                case "droid":
-                    if (CanDetectCLI("droid", "--version"))
-                        return (true, "CLI detected");
-                    break;
-            }
-
-            return (false, "Not configured");
-        }
-        catch (Exception ex)
-        {
-            DebugLogger.LogError("SettingsWindow", $"GetProviderStatusWithCLI({providerId}) error", ex);
-            return (false, "Not configured");
-        }
-    }
-
-    /// <summary>
-    /// Quick check if a CLI tool is available (synchronous, with timeout)
-    /// </summary>
-    private bool CanDetectCLI(string command, string args)
-    {
-        try
-        {
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = command,
-                Arguments = args,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-
-            using var process = Process.Start(startInfo);
-            if (process == null) return false;
-
-            // Wait max 2 seconds
-            var completed = process.WaitForExit(2000);
-            if (!completed)
-            {
-                try { process.Kill(); } catch { }
-                return false;
-            }
-
-            return process.ExitCode == 0;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private Border CreateZaiProviderCard()
-    {
-        // Use secure credential store instead of settings file
-        var hasToken = ZaiSettingsReader.HasApiToken();
-
-        var card = new Border
-        {
-            Background = new SolidColorBrush(_theme.CardColor),
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(16),
-            Margin = new Thickness(0, 0, 0, 8)
-        };
-
-        var mainStack = new StackPanel { Spacing = 12 };
-
-        // Header row with icon, name, status
-        var headerGrid = new Grid();
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        // Icon with z.ai color background
-        var iconBorder = new Border
-        {
-            Width = 36,
-            Height = 36,
-            CornerRadius = new CornerRadius(8),
-            Background = new SolidColorBrush(ParseColor("#E85A6A"))
-        };
-        var svgPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icons", "zai-white.svg");
-        if (System.IO.File.Exists(svgPath))
-        {
-            iconBorder.Child = new Image
-            {
-                Width = 20,
-                Height = 20,
-                Source = new SvgImageSource(new Uri(svgPath)),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
             };
         }
-        Grid.SetColumn(iconBorder, 0);
-
-        // Info
-        var infoStack = new StackPanel
-        {
-            Margin = new Thickness(12, 0, 0, 0),
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        infoStack.Children.Add(new TextBlock
-        {
-            Text = "z.ai",
-            FontSize = 14,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
-        });
-
-        var statusStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        statusStack.Children.Add(new Ellipse
-        {
-            Width = 8,
-            Height = 8,
-            Fill = new SolidColorBrush(hasToken ? _theme.SuccessColor : _theme.SecondaryTextColor)
-        });
-        statusStack.Children.Add(new TextBlock
-        {
-            Text = hasToken ? "API token configured (secure)" : "Not configured",
-            FontSize = 12,
-            Foreground = new SolidColorBrush(_theme.SecondaryTextColor)
-        });
-        infoStack.Children.Add(statusStack);
-        Grid.SetColumn(infoStack, 1);
-
-        headerGrid.Children.Add(iconBorder);
-        headerGrid.Children.Add(infoStack);
-        mainStack.Children.Add(headerGrid);
-
-        // API Token input section
-        var tokenSection = new StackPanel { Spacing = 10 };
-
-        // Row with input and button
-        var inputStack = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 8
-        };
-
-        var tokenTextBox = new TextBox
-        {
-            PlaceholderText = hasToken ? "Token saved • Enter new to replace" : "Paste your z.ai API token",
-            Width = 280,
-            Height = 32
-        };
-        inputStack.Children.Add(tokenTextBox);
-
-        var saveButton = new Button
-        {
-            Content = "Save",
-            Padding = new Thickness(16, 4, 16, 4),
-            Background = new SolidColorBrush(_theme.AccentColor),
-            Foreground = new SolidColorBrush(Colors.White),
-            Height = 32
-        };
-        saveButton.Click += async (s, e) =>
-        {
-            // Store securely using Windows Credential Manager
-            var token = string.IsNullOrWhiteSpace(tokenTextBox.Text) ? null : tokenTextBox.Text;
-            var success = ZaiSettingsReader.StoreApiToken(token);
-
-            var dialog = new ContentDialog
-            {
-                Title = success ? "z.ai Token Saved" : "Error",
-                Content = success
-                    ? (string.IsNullOrWhiteSpace(token)
-                        ? "API token cleared from secure storage."
-                        : "API token saved securely to Windows Credential Manager. Usage data will be fetched on next refresh.")
-                    : "Failed to save token to Windows Credential Manager.",
-                CloseButtonText = "OK",
-                XamlRoot = Content.XamlRoot
-            };
-            await dialog.ShowAsync();
-
-            // Clear text box after save
-            tokenTextBox.Text = "";
-
-            // Refresh the providers page to update status
-            DispatcherQueue?.TryEnqueue(() => ShowPage("Providers"));
-        };
-        inputStack.Children.Add(saveButton);
-        tokenSection.Children.Add(inputStack);
-
-        // Help text
-        var helpText = new TextBlock
-        {
-            Text = "Get your API token from z.ai/manage-apikey/subscription\nToken is stored securely in Windows Credential Manager",
-            FontSize = 11,
-            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
-            TextWrapping = TextWrapping.Wrap,
-            Opacity = 0.7
-        };
-        tokenSection.Children.Add(helpText);
-
-        mainStack.Children.Add(tokenSection);
-        card.Child = mainStack;
-
-        return card;
+        return _providersPage;
     }
 
-    private Border CreateMinimaxProviderCard()
+    private AppearanceSettingsPage GetAppearancePage()
     {
-        var hasCredentials = MinimaxCredentialsStore.HasCredentials();
-
-        var card = new Border
+        if (_appearancePage == null)
         {
-            Background = new SolidColorBrush(_theme.CardColor),
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(16),
-            Margin = new Thickness(0, 0, 0, 8)
-        };
-
-        var mainStack = new StackPanel { Spacing = 12 };
-
-        // Header row with icon, name, status
-        var headerGrid = new Grid();
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        // Icon with Minimax gradient background
-        var iconBorder = new Border
-        {
-            Width = 36,
-            Height = 36,
-            CornerRadius = new CornerRadius(8),
-            Background = new LinearGradientBrush
+            _appearancePage = new AppearanceSettingsPage();
+            _appearancePage.ThemeChanged += (theme) =>
             {
-                StartPoint = new Windows.Foundation.Point(0, 0.5),
-                EndPoint = new Windows.Foundation.Point(1, 0.5),
-                GradientStops =
-                {
-                    new GradientStop { Color = ParseColor("#E2167E"), Offset = 0 },
-                    new GradientStop { Color = ParseColor("#FE603C"), Offset = 1 }
-                }
-            },
-            Child = new FontIcon
-            {
-                Glyph = "\uE945",
-                FontSize = 18,
-                Foreground = new SolidColorBrush(Colors.White),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            }
-        };
-        Grid.SetColumn(iconBorder, 0);
-
-        // Info
-        var infoStack = new StackPanel
-        {
-            Margin = new Thickness(12, 0, 0, 0),
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        infoStack.Children.Add(new TextBlock
-        {
-            Text = "Minimax",
-            FontSize = 14,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
-        });
-
-        var statusStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        statusStack.Children.Add(new Ellipse
-        {
-            Width = 8,
-            Height = 8,
-            Fill = new SolidColorBrush(hasCredentials ? _theme.SuccessColor : _theme.SecondaryTextColor)
-        });
-        statusStack.Children.Add(new TextBlock
-        {
-            Text = hasCredentials ? "API key configured (secure)" : "Not configured",
-            FontSize = 12,
-            Foreground = new SolidColorBrush(_theme.SecondaryTextColor)
-        });
-        infoStack.Children.Add(statusStack);
-        Grid.SetColumn(infoStack, 1);
-
-        headerGrid.Children.Add(iconBorder);
-        headerGrid.Children.Add(infoStack);
-        mainStack.Children.Add(headerGrid);
-
-        // API Key input section (same pattern as Zai)
-        var tokenSection = new StackPanel { Spacing = 8 };
-        tokenSection.Children.Add(new TextBlock
-        {
-            Text = "API Key",
-            FontSize = 12,
-            Foreground = new SolidColorBrush(_theme.SecondaryTextColor)
-        });
-
-        var tokenGrid = new Grid();
-        tokenGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        tokenGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        var tokenBox = new TextBox
-        {
-            PlaceholderText = hasCredentials ? "Key stored (enter new to replace)" : "Enter your Minimax API key",
-            Text = "",
-            Padding = new Thickness(12, 8, 12, 8),
-            MinHeight = 36,
-            MinWidth = 250,
-            VerticalAlignment = VerticalAlignment.Center,
-            IsEnabled = true,
-            AcceptsReturn = false
-        };
-        Grid.SetColumn(tokenBox, 0);
-
-        var saveButton = new Button
-        {
-            Content = "Save",
-            Margin = new Thickness(8, 0, 0, 0),
-            Padding = new Thickness(16, 8, 16, 8),
-            Background = new SolidColorBrush(_theme.AccentColor),
-            Foreground = new SolidColorBrush(Colors.White)
-        };
-        saveButton.Click += async (s, e) =>
-        {
-            var key = string.IsNullOrWhiteSpace(tokenBox.Text) ? null : tokenBox.Text;
-            var success = MinimaxCredentialsStore.StoreApiKey(key);
-
-            var dialog = new ContentDialog
-            {
-                Title = success ? "Minimax API Key Saved" : "Error",
-                Content = success
-                    ? (string.IsNullOrWhiteSpace(key)
-                        ? "API key cleared from secure storage."
-                        : "API key saved securely to Windows Credential Manager.")
-                    : "Failed to save API key to Windows Credential Manager.",
-                CloseButtonText = "OK",
-                XamlRoot = Content.XamlRoot
-            };
-            await dialog.ShowAsync();
-
-            tokenBox.Text = "";
-            DispatcherQueue?.TryEnqueue(() => ShowPage("Providers"));
-        };
-        Grid.SetColumn(saveButton, 1);
-
-        tokenGrid.Children.Add(tokenBox);
-        tokenGrid.Children.Add(saveButton);
-        tokenSection.Children.Add(tokenGrid);
-
-        // Help text
-        var helpStack = new StackPanel { Spacing = 2 };
-        helpStack.Children.Add(new TextBlock
-        {
-            Text = "Get your API key from platform.minimax.io",
-            FontSize = 11,
-            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
-            TextWrapping = TextWrapping.Wrap
-        });
-        helpStack.Children.Add(new TextBlock
-        {
-            Text = "Key is stored securely in Windows Credential Manager",
-            FontSize = 10,
-            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
-            FontStyle = Windows.UI.Text.FontStyle.Italic,
-            TextWrapping = TextWrapping.Wrap
-        });
-        tokenSection.Children.Add(helpStack);
-
-        mainStack.Children.Add(tokenSection);
-        card.Child = mainStack;
-
-        return card;
-    }
-
-    private FrameworkElement CreateProviderCardIcon(string providerId, string name, string colorHex)
-    {
-        var isDark = _theme.IsDarkMode;
-        var provideLower = providerId.ToLower();
-
-        // Special handling per provider
-        switch (provideLower)
-        {
-            case "gemini":
-                // Gemini: No background, just the original colored logo
-                var geminiSvgPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icons", "gemini.svg");
-                if (System.IO.File.Exists(geminiSvgPath))
-                {
-                    return new Image
-                    {
-                        Width = 36,
-                        Height = 36,
-                        Source = new SvgImageSource(new Uri(geminiSvgPath)),
-                        VerticalAlignment = VerticalAlignment.Center
-                    };
-                }
-                break;
-
-            case "cursor":
-                // Cursor: black bg + white logo (always, for visibility in both modes)
-                var cursorSvgPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icons", "cursor-white.svg");
-                if (System.IO.File.Exists(cursorSvgPath))
-                {
-                    var cursorBorder = new Border
-                    {
-                        Width = 36,
-                        Height = 36,
-                        CornerRadius = new CornerRadius(8),
-                        Background = new SolidColorBrush(Colors.Black),
-                        Padding = new Thickness(6)
-                    };
-                    cursorBorder.Child = new Image
-                    {
-                        Width = 24,
-                        Height = 24,
-                        Source = new SvgImageSource(new Uri(cursorSvgPath)),
-                        HorizontalAlignment = HorizontalAlignment.Center,
-                        VerticalAlignment = VerticalAlignment.Center
-                    };
-                    return cursorBorder;
-                }
-                break;
-
-            case "droid":
-                // Droid: Always #EE6018 background
-                var droidBgColor = ParseColor("#EE6018");
-                var droidSvgPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icons", "droid-white.svg");
-                if (System.IO.File.Exists(droidSvgPath))
-                {
-                    var droidBorder = new Border
-                    {
-                        Width = 36,
-                        Height = 36,
-                        CornerRadius = new CornerRadius(8),
-                        Background = new SolidColorBrush(droidBgColor),
-                        Padding = new Thickness(6)
-                    };
-                    droidBorder.Child = new Image
-                    {
-                        Width = 24,
-                        Height = 24,
-                        Source = new SvgImageSource(new Uri(droidSvgPath)),
-                        HorizontalAlignment = HorizontalAlignment.Center,
-                        VerticalAlignment = VerticalAlignment.Center
-                    };
-                    return droidBorder;
-                }
-                break;
-
-            case "antigravity":
-                // Antigravity: Monochrome logo - use contrasting background/logo combo
-                // Dark mode: Black bg with white logo, Light mode: White bg with black logo
-                var antigravityBgColor = isDark ? Colors.Black : Colors.White;
-                var antigravitySvgFile = isDark ? "antigravity.svg" : "antigravity-black.svg";
-                var antigravitySvgPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icons", antigravitySvgFile);
-                if (System.IO.File.Exists(antigravitySvgPath))
-                {
-                    var antigravityBorder = new Border
-                    {
-                        Width = 36,
-                        Height = 36,
-                        CornerRadius = new CornerRadius(8),
-                        Background = new SolidColorBrush(antigravityBgColor),
-                        BorderBrush = new SolidColorBrush(isDark ? Windows.UI.Color.FromArgb(60, 255, 255, 255) : Windows.UI.Color.FromArgb(40, 0, 0, 0)),
-                        BorderThickness = new Thickness(1),
-                        Padding = new Thickness(6)
-                    };
-                    antigravityBorder.Child = new Image
-                    {
-                        Width = 24,
-                        Height = 24,
-                        Source = new SvgImageSource(new Uri(antigravitySvgPath)),
-                        HorizontalAlignment = HorizontalAlignment.Center,
-                        VerticalAlignment = VerticalAlignment.Center
-                    };
-                    return antigravityBorder;
-                }
-                break;
-
-            default:
-                // Other providers: Colored background with white SVG icon
-                var svgFileName = GetProviderSvgFileName(providerId, forIconWithBackground: true);
-                if (!string.IsNullOrEmpty(svgFileName))
-                {
-                    var svgPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icons", svgFileName);
-                    if (System.IO.File.Exists(svgPath))
-                    {
-                        var iconBorder = new Border
-                        {
-                            Width = 36,
-                            Height = 36,
-                            CornerRadius = new CornerRadius(8),
-                            Background = new SolidColorBrush(ParseColor(colorHex)),
-                            Padding = new Thickness(6)
-                        };
-                        iconBorder.Child = new Image
-                        {
-                            Width = 24,
-                            Height = 24,
-                            Source = new SvgImageSource(new Uri(svgPath)),
-                            HorizontalAlignment = HorizontalAlignment.Center,
-                            VerticalAlignment = VerticalAlignment.Center
-                        };
-                        return iconBorder;
-                    }
-                }
-                break;
-        }
-
-        // Fallback to colored background with initial letter
-        return CreateProviderIconWithBackground(name, colorHex);
-    }
-
-    private Border CreateProviderIconWithBackground(string name, string colorHex)
-    {
-        var border = new Border
-        {
-            Width = 36,
-            Height = 36,
-            CornerRadius = new CornerRadius(8),
-            Background = new SolidColorBrush(ParseColor(colorHex))
-        };
-        border.Child = new TextBlock
-        {
-            Text = name.Substring(0, 1).ToUpper(),
-            FontSize = 16,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Foreground = new SolidColorBrush(Colors.White),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        return border;
-    }
-
-    private ScrollViewer CreateAppearanceSettings()
-    {
-        var scroll = new ScrollViewer { Padding = new Thickness(24) };
-        var stack = new StackPanel { Spacing = 16 };
-
-        stack.Children.Add(CreateHeader("Appearance"));
-
-        // Theme selection
-        _themeCombo = new ComboBox { Width = 180 };
-        _themeCombo.Items.Add("System default");
-        _themeCombo.Items.Add("Light");
-        _themeCombo.Items.Add("Dark");
-        _themeCombo.SelectedIndex = (int)_settings.Settings.Theme;
-        _themeCombo.SelectionChanged += (s, e) =>
-        {
-            var newTheme = (ThemeMode)_themeCombo.SelectedIndex;
-            _theme.SetTheme(newTheme);
-
-            // Apply theme immediately to this window
-            if (_rootGrid != null)
-            {
-                _rootGrid.RequestedTheme = _theme.GetEffectiveTheme();
-            }
-        };
-        stack.Children.Add(CreateSettingCard(
-            "Theme",
-            "Choose your preferred color scheme",
-            _themeCombo));
-
-        // Use system accent color
-        _accentToggle = CreateToggleSwitch(_settings.Settings.UseSystemAccentColor);
-        _accentToggle.Toggled += (s, e) =>
-        {
-            _settings.Settings.UseSystemAccentColor = _accentToggle.IsOn;
-            _settings.Save();
-        };
-        stack.Children.Add(CreateSettingCard(
-            "Use system accent color",
-            "Match the Windows accent color for highlights",
-            _accentToggle));
-
-        // Compact mode
-        _compactToggle = CreateToggleSwitch(_settings.Settings.CompactMode);
-        _compactToggle.Toggled += (s, e) =>
-        {
-            _settings.Settings.CompactMode = _compactToggle.IsOn;
-            _settings.Save();
-        };
-        stack.Children.Add(CreateSettingCard(
-            "Compact mode",
-            "Use a smaller popup with less information",
-            _compactToggle));
-
-        // Show provider icons
-        _iconsToggle = CreateToggleSwitch(_settings.Settings.ShowProviderIcons);
-        _iconsToggle.Toggled += (s, e) =>
-        {
-            _settings.Settings.ShowProviderIcons = _iconsToggle.IsOn;
-            _settings.Save();
-        };
-        stack.Children.Add(CreateSettingCard(
-            "Show provider icons",
-            "Display icons next to provider names in tabs",
-            _iconsToggle));
-
-        // Separator for Tray Badge section
-        stack.Children.Add(new TextBlock
-        {
-            Text = "System Tray Badge",
-            FontSize = 16,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Margin = new Thickness(0, 16, 0, 8)
-        });
-
-        // Tray Badge toggle
-        _trayBadgeToggle = CreateToggleSwitch(_settings.Settings.TrayBadgeEnabled);
-        _trayBadgeToggle.Toggled += (s, e) =>
-        {
-            _settings.Settings.TrayBadgeEnabled = _trayBadgeToggle.IsOn;
-            _settings.Save();
-            UpdateTrayBadgeProvidersVisibility();
-        };
-        stack.Children.Add(CreateSettingCard(
-            "Show usage badges in tray",
-            "Replace tray icon with usage percentages (remaining %)",
-            _trayBadgeToggle));
-
-        // Tray Badge providers selection
-        _trayBadgeProvidersPanel = CreateTrayBadgeProvidersPanel();
-        stack.Children.Add(_trayBadgeProvidersPanel);
-        UpdateTrayBadgeProvidersVisibility();
-
-        scroll.Content = stack;
-        return scroll;
-    }
-
-    private ScrollViewer CreateNotificationsSettings()
-    {
-        var scroll = new ScrollViewer { Padding = new Thickness(24) };
-        var stack = new StackPanel { Spacing = 16 };
-
-        stack.Children.Add(CreateHeader("Notifications"));
-
-        // Usage alerts
-        _alertsToggle = CreateToggleSwitch(_settings.Settings.UsageAlertsEnabled);
-        _alertsToggle.Toggled += (s, e) =>
-        {
-            _settings.Settings.UsageAlertsEnabled = _alertsToggle.IsOn;
-            _settings.Save();
-        };
-        stack.Children.Add(CreateSettingCard(
-            "Usage alerts",
-            "Show notifications when usage reaches certain thresholds",
-            _alertsToggle));
-
-        // Warning threshold
-        _warningSlider = new Slider
-        {
-            Minimum = 50,
-            Maximum = 95,
-            Value = _settings.Settings.WarningThreshold,
-            Width = 150,
-            StepFrequency = 5
-        };
-        _warningSlider.ValueChanged += (s, e) =>
-        {
-            _settings.Settings.WarningThreshold = (int)_warningSlider.Value;
-            _settings.Save();
-        };
-        stack.Children.Add(CreateSettingCard(
-            $"Warning threshold ({_settings.Settings.WarningThreshold}%)",
-            "Show warning when usage exceeds this percentage",
-            _warningSlider));
-
-        // Critical threshold
-        _criticalSlider = new Slider
-        {
-            Minimum = 70,
-            Maximum = 100,
-            Value = _settings.Settings.CriticalThreshold,
-            Width = 150,
-            StepFrequency = 5
-        };
-        _criticalSlider.ValueChanged += (s, e) =>
-        {
-            _settings.Settings.CriticalThreshold = (int)_criticalSlider.Value;
-            _settings.Save();
-        };
-        stack.Children.Add(CreateSettingCard(
-            $"Critical threshold ({_settings.Settings.CriticalThreshold}%)",
-            "Show critical alert when usage exceeds this percentage",
-            _criticalSlider));
-
-        // Sound
-        _soundToggle = CreateToggleSwitch(_settings.Settings.PlaySound);
-        _soundToggle.Toggled += (s, e) =>
-        {
-            _settings.Settings.PlaySound = _soundToggle.IsOn;
-            _settings.Save();
-        };
-        stack.Children.Add(CreateSettingCard(
-            "Play sound",
-            "Play a sound when showing notifications",
-            _soundToggle));
-
-        scroll.Content = stack;
-        return scroll;
-    }
-
-    private ScrollViewer CreateAboutSettings()
-    {
-        var scroll = new ScrollViewer { Padding = new Thickness(24) };
-        var stack = new StackPanel { Spacing = 16 };
-
-        stack.Children.Add(CreateHeader("About QuoteBar"));
-
-        // App info card
-        var infoCard = new Border
-        {
-            Background = new SolidColorBrush(_theme.CardColor),
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(24)
-        };
-
-        var infoStack = new StackPanel { Spacing = 12, HorizontalAlignment = HorizontalAlignment.Center };
-
-        // Logo
-        FrameworkElement logoElement;
-        try
-        {
-            var logoPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "LOGO-NATIVE.png");
-            if (System.IO.File.Exists(logoPath))
-            {
-                var image = new Image
-                {
-                    Width = 80,
-                    Height = 80,
-                    Source = new BitmapImage(new Uri(logoPath)),
-                    HorizontalAlignment = HorizontalAlignment.Center
-                };
-                var imageBorder = new Border
-                {
-                    CornerRadius = new CornerRadius(16),
-                    Child = image
-                };
-                logoElement = imageBorder;
-            }
-            else
-            {
-                throw new FileNotFoundException();
-            }
-        }
-        catch
-        {
-            var logoBorder = new Border
-            {
-                Width = 80,
-                Height = 80,
-                CornerRadius = new CornerRadius(16),
-                Background = new SolidColorBrush(_theme.AccentColor),
-                HorizontalAlignment = HorizontalAlignment.Center
-            };
-            logoBorder.Child = new FontIcon
-            {
-                Glyph = "\uE9D9",
-                FontSize = 36,
-                Foreground = new SolidColorBrush(Colors.White),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            logoElement = logoBorder;
-        }
-        infoStack.Children.Add(logoElement);
-
-        infoStack.Children.Add(new TextBlock
-        {
-            Text = "QuoteBar",
-            FontSize = 24,
-            FontWeight = Microsoft.UI.Text.FontWeights.Bold,
-            HorizontalAlignment = HorizontalAlignment.Center
-        });
-
-        infoStack.Children.Add(new TextBlock
-        {
-            Text = "Version 1.0.0",
-            FontSize = 14,
-            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
-            HorizontalAlignment = HorizontalAlignment.Center
-        });
-
-        infoStack.Children.Add(new TextBlock
-        {
-            Text = "AI Usage Monitor for Windows",
-            FontSize = 14,
-            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 8, 0, 0)
-        });
-
-        // Links
-        var linksStack = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 16,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 16, 0, 0)
-        };
-
-        linksStack.Children.Add(CreateLinkButton("GitHub", "https://github.com"));
-        linksStack.Children.Add(CreateLinkButton("Website", "https://nativebar.app"));
-        linksStack.Children.Add(CreateLinkButton("Report Issue", "https://github.com/issues"));
-
-        infoStack.Children.Add(linksStack);
-        infoCard.Child = infoStack;
-        stack.Children.Add(infoCard);
-
-        // Check for updates
-        var updateButton = new Button
-        {
-            Content = "Check for updates",
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Margin = new Thickness(0, 8, 0, 0),
-            Padding = new Thickness(16, 8, 16, 8)
-        };
-        updateButton.Click += async (s, e) =>
-        {
-            var dialog = new ContentDialog
-            {
-                Title = "Check for Updates",
-                Content = "You are running the latest version of NativeBar!",
-                CloseButtonText = "OK",
-                XamlRoot = Content.XamlRoot
-            };
-            await dialog.ShowAsync();
-        };
-        stack.Children.Add(updateButton);
-
-        scroll.Content = stack;
-        return scroll;
-    }
-
-    private HyperlinkButton CreateLinkButton(string text, string url)
-    {
-        var button = new HyperlinkButton
-        {
-            Content = text,
-            NavigateUri = new Uri(url),
-            Foreground = new SolidColorBrush(_theme.AccentColor),
-            Padding = new Thickness(8, 4, 8, 4)
-        };
-        return button;
-    }
-
-    private TextBlock CreateHeader(string text, double topMargin = 0)
-    {
-        return new TextBlock
-        {
-            Text = text,
-            FontSize = 28,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Margin = new Thickness(0, topMargin, 0, 8)
-        };
-    }
-
-    private TextBlock CreateSubheader(string text)
-    {
-        return new TextBlock
-        {
-            Text = text,
-            FontSize = 14,
-            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
-            Margin = new Thickness(0, 0, 0, 16),
-            TextWrapping = TextWrapping.Wrap
-        };
-    }
-
-    private Border CreateSettingCard(string title, string description, FrameworkElement control)
-    {
-        var card = new Border
-        {
-            Background = new SolidColorBrush(_theme.CardColor),
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(16),
-            Margin = new Thickness(0, 0, 0, 4)
-        };
-
-        var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        var textStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        textStack.Children.Add(new TextBlock
-        {
-            Text = title,
-            FontSize = 14
-        });
-        textStack.Children.Add(new TextBlock
-        {
-            Text = description,
-            FontSize = 12,
-            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
-            TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 2, 0, 0)
-        });
-        Grid.SetColumn(textStack, 0);
-
-        Grid.SetColumn(control, 1);
-        control.VerticalAlignment = VerticalAlignment.Center;
-        control.Margin = new Thickness(16, 0, 0, 0);
-
-        grid.Children.Add(textStack);
-        grid.Children.Add(control);
-        card.Child = grid;
-
-        return card;
-    }
-
-    private ToggleSwitch CreateToggleSwitch(bool isOn)
-    {
-        return new ToggleSwitch
-        {
-            IsOn = isOn,
-            OnContent = "",
-            OffContent = ""
-        };
-    }
-
-    private StackPanel CreateTrayBadgeProvidersPanel()
-    {
-        var panel = new StackPanel { Spacing = 8 };
-
-        var card = new Border
-        {
-            Background = new SolidColorBrush(_theme.CardColor),
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(16)
-        };
-
-        var innerStack = new StackPanel { Spacing = 12 };
-
-        innerStack.Children.Add(new TextBlock
-        {
-            Text = "Select provider for tray badge",
-            FontSize = 14,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
-        });
-
-        innerStack.Children.Add(new TextBlock
-        {
-            Text = "Shows remaining % (100 - used) for the selected provider",
-            FontSize = 12,
-            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
-            Margin = new Thickness(0, 0, 0, 8)
-        });
-
-        // Provider radio buttons (only one selectable)
-        var providers = new[] {
-            ("Claude", "claude", "#D97757"),
-            ("Gemini", "gemini", "#4285F4"),
-            ("Copilot", "copilot", "#24292F"),
-            ("Cursor", "cursor", "#007AFF"),
-            ("Codex", "codex", "#7C3AED"),
-            ("Droid", "droid", "#EE6018"),
-            ("Antigravity", "antigravity", "#FF6B6B"),
-            ("z.ai", "zai", "#E85A6A")
-        };
-
-        foreach (var (displayName, id, color) in providers)
-        {
-            var isSelected = _settings.Settings.TrayBadgeProvider == id;
-            innerStack.Children.Add(CreateTrayBadgeProviderRadio(displayName, id, color, isSelected));
-        }
-
-        card.Child = innerStack;
-        panel.Children.Add(card);
-        return panel;
-    }
-
-    private Grid CreateTrayBadgeProviderRadio(string displayName, string providerId, string colorHex, bool isChecked)
-    {
-        var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-        // RadioButton (only one can be selected)
-        var radio = new RadioButton
-        {
-            IsChecked = isChecked,
-            Tag = providerId,
-            GroupName = "TrayBadgeProvider",
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        radio.Checked += OnTrayBadgeProviderRadioChanged;
-        Grid.SetColumn(radio, 0);
-
-        // Provider icon (SVG)
-        FrameworkElement iconElement;
-        var svgFileName = GetProviderSvgFileName(providerId);
-        if (!string.IsNullOrEmpty(svgFileName))
-        {
-            var svgPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icons", svgFileName);
-            if (System.IO.File.Exists(svgPath))
-            {
-                iconElement = new Image
-                {
-                    Width = 16,
-                    Height = 16,
-                    Source = new SvgImageSource(new Uri(svgPath)),
-                    Margin = new Thickness(4, 0, 8, 0),
-                    VerticalAlignment = VerticalAlignment.Center
-                };
-            }
-            else
-            {
-                // Fallback to color dot if SVG not found
-                iconElement = new Ellipse
-                {
-                    Width = 10,
-                    Height = 10,
-                    Fill = new SolidColorBrush(ParseColor(colorHex)),
-                    Margin = new Thickness(4, 0, 8, 0),
-                    VerticalAlignment = VerticalAlignment.Center
-                };
-            }
-        }
-        else
-        {
-            // No SVG available, use color dot
-            iconElement = new Ellipse
-            {
-                Width = 10,
-                Height = 10,
-                Fill = new SolidColorBrush(ParseColor(colorHex)),
-                Margin = new Thickness(4, 0, 8, 0),
-                VerticalAlignment = VerticalAlignment.Center
+                if (_rootGrid != null) _rootGrid.RequestedTheme = theme;
             };
         }
-        Grid.SetColumn(iconElement, 1);
-
-        // Name
-        var nameText = new TextBlock
-        {
-            Text = displayName,
-            FontSize = 13,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        Grid.SetColumn(nameText, 2);
-
-        grid.Children.Add(radio);
-        grid.Children.Add(iconElement);
-        grid.Children.Add(nameText);
-
-        return grid;
-    }
-
-    private void OnTrayBadgeProviderRadioChanged(object sender, RoutedEventArgs e)
-    {
-        if (sender is not RadioButton radio) return;
-        var providerId = radio.Tag?.ToString();
-        if (string.IsNullOrEmpty(providerId)) return;
-
-        // Set the single selected provider
-        _settings.Settings.TrayBadgeProvider = providerId;
-        _settings.Save();
-    }
-
-    private void UpdateTrayBadgeProvidersVisibility()
-    {
-        if (_trayBadgeProvidersPanel != null)
-        {
-            _trayBadgeProvidersPanel.Visibility = _settings.Settings.TrayBadgeEnabled
-                ? Visibility.Visible
-                : Visibility.Collapsed;
-        }
-    }
-
-    private string? GetProviderSvgFileName(string providerId, bool forIconWithBackground = false)
-    {
-        // When icon is shown on colored background, always use white version
-        if (forIconWithBackground)
-        {
-            return providerId.ToLower() switch
-            {
-                "claude" => "claude-white.svg",
-                "codex" => "openai-white.svg",
-                "gemini" => "gemini-white.svg",
-                "copilot" => "github-copilot-white.svg",
-                "cursor" => "cursor-white.svg",
-                "droid" => "droid-white.svg",
-                "antigravity" => "antigravity.svg",
-                "zai" => "zai-white.svg",
-                "minimax" => "minimax.svg",  // Use regular on gradient background
-                _ => null
-            };
-        }
-
-        // Use white versions for dark icons in dark mode (when shown without background)
-        var isDark = _theme.IsDarkMode;
-        return providerId.ToLower() switch
-        {
-            "claude" => "claude.svg",  // Orange - visible in both modes
-            "codex" => isDark ? "openai-white.svg" : "openai.svg",
-            "gemini" => "gemini.svg",  // Blue - visible in both modes
-            "copilot" => isDark ? "github-copilot-white.svg" : "github-copilot.svg",
-            "cursor" => isDark ? "cursor-white.svg" : "cursor.svg",
-            "droid" => isDark ? "droid-white.svg" : "droid.svg",
-            "antigravity" => isDark ? "antigravity.svg" : "antigravity-black.svg",  // White/black based on theme
-            "zai" => isDark ? "zai-white.svg" : "zai.svg",  // Black/white based on theme
-            "minimax" => "minimax-color.svg",  // Gradient logo - visible in both modes
-            _ => null
-        };
-    }
-
-    private Windows.UI.Color ParseColor(string hex)
-    {
-        hex = hex.TrimStart('#');
-        byte r = Convert.ToByte(hex.Substring(0, 2), 16);
-        byte g = Convert.ToByte(hex.Substring(2, 2), 16);
-        byte b = Convert.ToByte(hex.Substring(4, 2), 16);
-        return Windows.UI.Color.FromArgb(255, r, g, b);
-    }
-
-    private (List<string> Modifiers, string Key) ParseHotkeyString(string hotkeyString)
-    {
-        // Parse "Win + Shift + Q" into modifiers list and key
-        var parts = hotkeyString.Split('+', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        var modifiers = new List<string>();
-        var key = "Q";
-
-        foreach (var part in parts)
-        {
-            if (part.Equals("Win", StringComparison.OrdinalIgnoreCase) ||
-                part.Equals("Shift", StringComparison.OrdinalIgnoreCase) ||
-                part.Equals("Alt", StringComparison.OrdinalIgnoreCase) ||
-                part.Equals("Ctrl", StringComparison.OrdinalIgnoreCase))
-            {
-                modifiers.Add(part);
-            }
-            else
-            {
-                key = part;
-            }
-        }
-
-        return (modifiers, key);
-    }
-
-    private TextBlock CreateProviderInitial(string name)
-    {
-        return new TextBlock
-        {
-            Text = name.Substring(0, 1).ToUpper(),
-            FontSize = 18,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Foreground = new SolidColorBrush(Colors.White),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center
-        };
+        return _appearancePage;
     }
 
     private void ConfigureWindow()
     {
-        // Set window size - compact size that fits content
-        _appWindow.Resize(new SizeInt32(800, 520));
+        _appWindow.Resize(new SizeInt32(920, 640));
 
-        // Center window
         var displayArea = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Primary);
         var workArea = displayArea.WorkArea;
-        var x = (workArea.Width - 800) / 2 + workArea.X;
-        var y = (workArea.Height - 520) / 2 + workArea.Y;
+        var x = (workArea.Width - 920) / 2 + workArea.X;
+        var y = (workArea.Height - 640) / 2 + workArea.Y;
         _appWindow.Move(new PointInt32(x, y));
 
-        // Set custom icon
         try
         {
             var iconPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "LOGO-NATIVE.ico");
             if (!System.IO.File.Exists(iconPath))
-            {
-                // Try PNG as fallback (won't work but at least won't crash)
                 iconPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "LOGO-NATIVE.png");
-            }
             if (System.IO.File.Exists(iconPath))
-            {
                 _appWindow.SetIcon(iconPath);
-            }
         }
         catch { }
 
-        // Configure custom titlebar
         if (AppWindowTitleBar.IsCustomizationSupported())
         {
             var titleBar = _appWindow.TitleBar;
             titleBar.ExtendsContentIntoTitleBar = true;
-
-            // Use standard height for a more compact look
-            titleBar.PreferredHeightOption = TitleBarHeightOption.Standard;
-
-            // Set titlebar colors based on theme
+            titleBar.PreferredHeightOption = TitleBarHeightOption.Tall;
             titleBar.ButtonBackgroundColor = Colors.Transparent;
             titleBar.ButtonInactiveBackgroundColor = Colors.Transparent;
 
@@ -2477,115 +556,10 @@ public sealed class SettingsWindow : Window
             }
             else
             {
-            titleBar.ButtonForegroundColor = Colors.Black;
+                titleBar.ButtonForegroundColor = Colors.Black;
                 titleBar.ButtonHoverBackgroundColor = Windows.UI.Color.FromArgb(30, 0, 0, 0);
                 titleBar.ButtonPressedBackgroundColor = Windows.UI.Color.FromArgb(50, 0, 0, 0);
             }
-        }
-    }
-
-    /// <summary>
-    /// Launch the Copilot OAuth Device Flow login window
-    /// </summary>
-    private async Task LaunchCopilotLoginAsync()
-    {
-        try
-        {
-            var result = await CopilotLoginHelper.LaunchLoginAsync();
-            
-            if (result.IsSuccess)
-            {
-                // Refresh Copilot usage data
-                var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
-                if (usageStore != null)
-                {
-                    await usageStore.RefreshAsync("copilot");
-                }
-
-                // Refresh the providers page after a short delay to avoid COMException
-                await Task.Delay(500);
-                DispatcherQueue?.TryEnqueue(() =>
-                {
-                    if (_currentPage == "Providers")
-                    {
-                        ShowPage("Providers");
-                    }
-                });
-            }
-        }
-        catch (Exception ex)
-        {
-            DebugLogger.LogError("SettingsWindow", "LaunchCopilotLoginAsync failed", ex);
-        }
-    }
-
-    /// <summary>
-    /// Launch the Cursor WebView login window
-    /// </summary>
-    private async Task LaunchCursorLoginAsync()
-    {
-        try
-        {
-            var result = await CursorLoginHelper.LaunchLoginAsync();
-
-            if (result.IsSuccess)
-            {
-                // Refresh Cursor usage data
-                var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
-                if (usageStore != null)
-                {
-                    await usageStore.RefreshAsync("cursor");
-                }
-
-                // Refresh the providers page after a short delay
-                await Task.Delay(500);
-                DispatcherQueue?.TryEnqueue(() =>
-                {
-                    if (_currentPage == "Providers")
-                    {
-                        ShowPage("Providers");
-                    }
-                });
-            }
-        }
-        catch (Exception ex)
-        {
-            DebugLogger.LogError("SettingsWindow", "LaunchCursorLoginAsync failed", ex);
-        }
-    }
-
-    /// <summary>
-    /// Launch the Droid WebView login window
-    /// </summary>
-    private async Task LaunchDroidLoginAsync()
-    {
-        try
-        {
-            var result = await DroidLoginHelper.LaunchLoginAsync();
-
-            if (result.IsSuccess)
-            {
-                // Refresh Droid usage data
-                var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
-                if (usageStore != null)
-                {
-                    await usageStore.RefreshAsync("droid");
-                }
-
-                // Refresh the providers page after a short delay
-                await Task.Delay(500);
-                DispatcherQueue?.TryEnqueue(() =>
-                {
-                    if (_currentPage == "Providers")
-                    {
-                        ShowPage("Providers");
-                    }
-                });
-            }
-        }
-        catch (Exception ex)
-        {
-            DebugLogger.LogError("SettingsWindow", "LaunchDroidLoginAsync failed", ex);
         }
     }
 }
