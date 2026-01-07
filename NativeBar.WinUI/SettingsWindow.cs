@@ -1035,28 +1035,79 @@ public sealed class SettingsWindow : Window
     }
 
     /// <summary>
-    /// Creates a provider card with automatic status detection based on UsageStore data
+    /// Creates a provider card with automatic status detection based on UsageStore data.
+    /// Detection is done asynchronously to avoid blocking the UI.
     /// </summary>
     private Border CreateProviderCardWithAutoDetect(string name, string providerId, string colorHex)
     {
-        var (isConnected, status) = GetProviderStatus(providerId);
-        return CreateProviderCard(name, providerId, colorHex, isConnected, status);
+        // First check cached/quick status (UsageStore, session stores - no blocking)
+        var (isConnected, status) = GetProviderStatusFast(providerId);
+        var card = CreateProviderCard(name, providerId, colorHex, isConnected, status);
+
+        // If not connected via fast check, schedule async CLI detection
+        if (!isConnected)
+        {
+            // Run CLI detection in background and update card
+            _ = DetectProviderCLIAsync(card, name, providerId, colorHex);
+        }
+
+        return card;
     }
 
     /// <summary>
-    /// Detects the current status of a provider by checking:
-    /// 1. If we have cached usage data without errors -> Connected
-    /// 2. If provider strategies report they can execute -> Ready to connect
-    /// 3. Otherwise -> Not configured
+    /// Async CLI detection that updates the card when complete
     /// </summary>
-    private (bool isConnected, string status) GetProviderStatus(string providerId)
+    private async Task DetectProviderCLIAsync(Border card, string name, string providerId, string colorHex)
+    {
+        try
+        {
+            var (isConnected, status) = await Task.Run(() => GetProviderStatusWithCLI(providerId));
+
+            if (isConnected && DispatcherQueue != null)
+            {
+                // Update the card on UI thread
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    try
+                    {
+                        // Check if we're still on the Providers page
+                        if (_currentPage != "Providers") return;
+
+                        // Check if card is still in the visual tree
+                        if (card.Parent is not Panel panel) return;
+
+                        var index = panel.Children.IndexOf(card);
+                        if (index < 0) return;
+
+                        var newCard = CreateProviderCard(name, providerId, colorHex, isConnected, status);
+                        panel.Children.RemoveAt(index);
+                        panel.Children.Insert(index, newCard);
+                    }
+                    catch (Exception ex)
+                    {
+                        DebugLogger.LogError("SettingsWindow", $"DetectProviderCLIAsync UI update ({providerId}) error", ex);
+                    }
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("SettingsWindow", $"DetectProviderCLIAsync({providerId}) error", ex);
+        }
+    }
+
+    /// <summary>
+    /// Fast provider status detection - only checks cached data, session stores, and credentials.
+    /// Does NOT run any CLI commands to avoid blocking the UI.
+    /// </summary>
+    private (bool isConnected, string status) GetProviderStatusFast(string providerId)
     {
         try
         {
             // First check if we have successful usage data in the store
             var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
             var snapshot = usageStore?.GetSnapshot(providerId);
-            
+
             if (snapshot != null && snapshot.ErrorMessage == null && !snapshot.IsLoading && snapshot.Primary != null)
             {
                 // We have actual data - provider is connected
@@ -1064,59 +1115,98 @@ public sealed class SettingsWindow : Window
                 return (true, planInfo);
             }
 
-            // Check provider-specific detection methods
+            // Check provider-specific fast detection methods (no CLI calls)
+            switch (providerId.ToLower())
+            {
+                case "claude":
+                    var claudeCredentials = ClaudeOAuthCredentialsStore.TryLoad();
+                    if (claudeCredentials != null && !claudeCredentials.IsExpired)
+                        return (true, "OAuth connected");
+                    break;
+
+                case "cursor":
+                    if (CursorSessionStore.HasSession())
+                        return (true, "Session stored");
+                    break;
+
+                case "gemini":
+                    if (GeminiOAuthCredentialsStore.HasValidCredentials())
+                        return (true, "OAuth connected");
+                    break;
+
+                case "copilot":
+                    var copilotCredentials = CopilotOAuthCredentialsStore.TryLoad();
+                    if (copilotCredentials != null && !copilotCredentials.IsExpired)
+                        return (true, "GitHub OAuth connected");
+                    break;
+
+                case "zai":
+                    if (ZaiSettingsReader.HasApiToken())
+                        return (true, "API token configured");
+                    break;
+            }
+
+            // Return "Checking..." for providers that need CLI detection
+            var needsCLICheck = providerId.ToLower() switch
+            {
+                "codex" => true,
+                "claude" => true,  // May have CLI instead of OAuth
+                "gemini" => true,  // May have CLI instead of OAuth
+                "copilot" => true, // May have gh CLI
+                "droid" => true,
+                _ => false
+            };
+
+            return (false, needsCLICheck ? "Checking..." : "Not configured");
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("SettingsWindow", $"GetProviderStatusFast({providerId}) error", ex);
+            return (false, "Not configured");
+        }
+    }
+
+    /// <summary>
+    /// Slow provider status detection - checks CLI availability.
+    /// Should be called from a background thread.
+    /// </summary>
+    private (bool isConnected, string status) GetProviderStatusWithCLI(string providerId)
+    {
+        try
+        {
             switch (providerId.ToLower())
             {
                 case "codex":
                     if (CanDetectCLI("codex", "--version"))
                         return (true, "CLI detected");
                     break;
-                    
+
                 case "claude":
-                    // Check OAuth credentials or CLI
-                    var claudeCredentials = ClaudeOAuthCredentialsStore.TryLoad();
-                    if (claudeCredentials != null && !claudeCredentials.IsExpired)
-                        return (true, "OAuth connected");
                     if (CanDetectCLI("claude", "--version"))
                         return (true, "CLI detected");
                     break;
-                    
-                case "cursor":
-                    if (CursorSessionStore.HasSession())
-                        return (true, "Session stored");
-                    break;
-                    
+
                 case "gemini":
-                    if (GeminiOAuthCredentialsStore.HasValidCredentials())
-                        return (true, "OAuth connected");
                     if (CanDetectCLI("gemini", "--version"))
                         return (true, "CLI detected");
                     break;
-                    
+
                 case "copilot":
-                    var copilotCredentials = CopilotOAuthCredentialsStore.TryLoad();
-                    if (copilotCredentials != null && !copilotCredentials.IsExpired)
-                        return (true, "GitHub OAuth connected");
                     if (CanDetectCLI("gh", "auth status"))
                         return (true, "GitHub CLI authenticated");
                     break;
-                    
+
                 case "droid":
                     if (CanDetectCLI("droid", "--version"))
                         return (true, "CLI detected");
                     break;
-                    
-                case "zai":
-                    if (ZaiSettingsReader.HasApiToken())
-                        return (true, "API token configured");
-                    break;
             }
-            
+
             return (false, "Not configured");
         }
         catch (Exception ex)
         {
-            DebugLogger.LogError("SettingsWindow", $"GetProviderStatus({providerId}) error", ex);
+            DebugLogger.LogError("SettingsWindow", $"GetProviderStatusWithCLI({providerId}) error", ex);
             return (false, "Not configured");
         }
     }
@@ -1915,16 +2005,49 @@ public sealed class SettingsWindow : Window
         checkbox.Unchecked += OnTrayBadgeProviderChanged;
         Grid.SetColumn(checkbox, 0);
 
-        // Color dot
-        var colorDot = new Ellipse
+        // Provider icon (SVG) - use proper icons instead of color dots
+        FrameworkElement iconElement;
+        var svgFileName = GetProviderSvgFileName(providerId);
+        if (!string.IsNullOrEmpty(svgFileName))
         {
-            Width = 10,
-            Height = 10,
-            Fill = new SolidColorBrush(ParseColor(colorHex)),
-            Margin = new Thickness(4, 0, 8, 0),
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        Grid.SetColumn(colorDot, 1);
+            var svgPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icons", svgFileName);
+            if (System.IO.File.Exists(svgPath))
+            {
+                iconElement = new Image
+                {
+                    Width = 16,
+                    Height = 16,
+                    Source = new SvgImageSource(new Uri(svgPath)),
+                    Margin = new Thickness(4, 0, 8, 0),
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+            }
+            else
+            {
+                // Fallback to color dot if SVG not found
+                iconElement = new Ellipse
+                {
+                    Width = 10,
+                    Height = 10,
+                    Fill = new SolidColorBrush(ParseColor(colorHex)),
+                    Margin = new Thickness(4, 0, 8, 0),
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+            }
+        }
+        else
+        {
+            // No SVG available, use color dot
+            iconElement = new Ellipse
+            {
+                Width = 10,
+                Height = 10,
+                Fill = new SolidColorBrush(ParseColor(colorHex)),
+                Margin = new Thickness(4, 0, 8, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+        }
+        Grid.SetColumn(iconElement, 1);
 
         // Name
         var nameText = new TextBlock
@@ -1936,7 +2059,7 @@ public sealed class SettingsWindow : Window
         Grid.SetColumn(nameText, 2);
 
         grid.Children.Add(checkbox);
-        grid.Children.Add(colorDot);
+        grid.Children.Add(iconElement);
         grid.Children.Add(nameText);
 
         return grid;
