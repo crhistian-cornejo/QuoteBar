@@ -166,26 +166,54 @@ public sealed class TrayPopupWindow : Window
     private void OnSettingsChanged()
     {
         // Rebuild UI on settings change (provider toggles, etc.)
-        DispatcherQueue?.TryEnqueue(() =>
+        try
         {
-            DebugLogger.Log("TrayPopup", "Settings changed - rebuilding UI");
-            BuildUI();
-            Content = _rootGrid;
-            UpdateUI();
-        });
+            DispatcherQueue?.TryEnqueue(() =>
+            {
+                try
+                {
+                    DebugLogger.Log("TrayPopup", "Settings changed - rebuilding UI");
+                    BuildUI();
+                    Content = _rootGrid;
+                    UpdateUI();
+                }
+                catch (Exception ex)
+                {
+                    DebugLogger.LogError("TrayPopup", "OnSettingsChanged UI rebuild failed", ex);
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("TrayPopup", "OnSettingsChanged dispatch failed", ex);
+        }
     }
 
     private void OnThemeChanged(ElementTheme theme)
     {
         // Update theme on UI thread
-        DispatcherQueue?.TryEnqueue(() =>
+        try
         {
-            _isDarkMode = theme == ElementTheme.Dark;
-            // Rebuild UI with new theme colors
-            BuildUI();
-            Content = _rootGrid;
-            UpdateUI();
-        });
+            DispatcherQueue?.TryEnqueue(() =>
+            {
+                try
+                {
+                    _isDarkMode = theme == ElementTheme.Dark;
+                    // Rebuild UI with new theme colors
+                    BuildUI();
+                    Content = _rootGrid;
+                    UpdateUI();
+                }
+                catch (Exception ex)
+                {
+                    DebugLogger.LogError("TrayPopup", "OnThemeChanged UI rebuild failed", ex);
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("TrayPopup", "OnThemeChanged dispatch failed", ex);
+        }
     }
 
     // Theme colors
