@@ -479,6 +479,7 @@ public sealed class TrayPopupWindow : Window
             "copilot" => Windows.UI.Color.FromArgb(255, 36, 41, 47),    // #24292F
             "droid" => Windows.UI.Color.FromArgb(255, 238, 96, 24),     // #EE6018
             "zai" => Windows.UI.Color.FromArgb(255, 232, 90, 106),      // #E85A6A
+            "minimax" => Windows.UI.Color.FromArgb(255, 226, 22, 126),   // #E2167E
             _ => Windows.UI.Color.FromArgb(255, 100, 100, 100)
         };
     }
@@ -496,6 +497,7 @@ public sealed class TrayPopupWindow : Window
             "copilot" => "#24292F",
             "droid" => "#EE6018",
             "zai" => "#E85A6A",
+            "minimax" => "#E2167E",
             _ => "#646464"
         };
     }
@@ -658,6 +660,7 @@ public sealed class TrayPopupWindow : Window
             "droid" => "droid.svg",
             "antigravity" => "antigravity.svg",
             "zai" => "zai.svg",
+            "minimax" => "minimax-color.svg",
             _ => null
         };
     }
@@ -681,7 +684,10 @@ public sealed class TrayPopupWindow : Window
             "codex" => _isDarkMode ? Colors.White : Windows.UI.Color.FromArgb(255, 0, 0, 0),
             "copilot" => _isDarkMode ? Colors.White : Windows.UI.Color.FromArgb(255, 36, 41, 47),
             "zai" => _isDarkMode ? Colors.White : Windows.UI.Color.FromArgb(255, 0, 0, 0),
-            
+
+            // Brand colors that work in both modes
+            "minimax" => Windows.UI.Color.FromArgb(255, 226, 22, 126),        // #E2167E Pink (gradient start)
+
             // Default - use theme-appropriate color
             _ => _isDarkMode ? Colors.White : Windows.UI.Color.FromArgb(255, 60, 60, 60)
         };

@@ -13,6 +13,7 @@ using NativeBar.WinUI.Core.Providers.Copilot;
 using NativeBar.WinUI.Core.Providers.Cursor;
 using NativeBar.WinUI.Core.Providers.Droid;
 using NativeBar.WinUI.Core.Providers.Gemini;
+using NativeBar.WinUI.Core.Providers.Minimax;
 using NativeBar.WinUI.Core.Providers.Zai;
 using NativeBar.WinUI.Core.Services;
 using System.Diagnostics;
@@ -657,6 +658,8 @@ public sealed class SettingsWindow : Window
             stack.Children.Add(CreateProviderCardWithAutoDetect("Antigravity", "antigravity", "#FF6B6B"));
             DebugLogger.Log("SettingsWindow", "CreateProvidersSettings: Creating Zai card");
             stack.Children.Add(CreateZaiProviderCard());
+            DebugLogger.Log("SettingsWindow", "CreateProvidersSettings: Creating Minimax card");
+            stack.Children.Add(CreateMinimaxProviderCard());
 
             DebugLogger.Log("SettingsWindow", "CreateProvidersSettings DONE");
             scroll.Content = stack;
@@ -1500,6 +1503,196 @@ public sealed class SettingsWindow : Window
         return card;
     }
 
+    private Border CreateMinimaxProviderCard()
+    {
+        var hasCredentials = MinimaxCredentialsStore.HasCredentials();
+
+        var card = new Border
+        {
+            Background = new SolidColorBrush(_theme.CardColor),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(16),
+            Margin = new Thickness(0, 0, 0, 8)
+        };
+
+        var mainStack = new StackPanel { Spacing = 12 };
+
+        // Header row with icon, name, status
+        var headerGrid = new Grid();
+        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        // Icon with Minimax gradient background
+        var iconBorder = new Border
+        {
+            Width = 36,
+            Height = 36,
+            CornerRadius = new CornerRadius(8),
+            Background = new LinearGradientBrush
+            {
+                StartPoint = new Windows.Foundation.Point(0, 0.5),
+                EndPoint = new Windows.Foundation.Point(1, 0.5),
+                GradientStops =
+                {
+                    new GradientStop { Color = ParseColor("#E2167E"), Offset = 0 },
+                    new GradientStop { Color = ParseColor("#FE603C"), Offset = 1 }
+                }
+            }
+        };
+        var svgPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icons", "minimax.svg");
+        if (System.IO.File.Exists(svgPath))
+        {
+            iconBorder.Child = new Image
+            {
+                Width = 20,
+                Height = 20,
+                Source = new SvgImageSource(new Uri(svgPath)),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+        }
+        Grid.SetColumn(iconBorder, 0);
+
+        // Info
+        var infoStack = new StackPanel
+        {
+            Margin = new Thickness(12, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        infoStack.Children.Add(new TextBlock
+        {
+            Text = "Minimax",
+            FontSize = 14,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+        });
+
+        var statusStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        statusStack.Children.Add(new Ellipse
+        {
+            Width = 8,
+            Height = 8,
+            Fill = new SolidColorBrush(hasCredentials ? _theme.SuccessColor : _theme.SecondaryTextColor)
+        });
+        statusStack.Children.Add(new TextBlock
+        {
+            Text = hasCredentials ? "API key configured (secure)" : "Not configured",
+            FontSize = 12,
+            Foreground = new SolidColorBrush(_theme.SecondaryTextColor)
+        });
+        infoStack.Children.Add(statusStack);
+        Grid.SetColumn(infoStack, 1);
+
+        headerGrid.Children.Add(iconBorder);
+        headerGrid.Children.Add(infoStack);
+        mainStack.Children.Add(headerGrid);
+
+        // API Key input section
+        var keySection = new StackPanel { Spacing = 8 };
+        keySection.Children.Add(new TextBlock
+        {
+            Text = "API Key",
+            FontSize = 12,
+            Foreground = new SolidColorBrush(_theme.SecondaryTextColor)
+        });
+
+        var keyGrid = new Grid();
+        keyGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        keyGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var keyBox = new PasswordBox
+        {
+            PlaceholderText = hasCredentials ? "Key stored (enter new to replace)" : "Enter your Minimax API key",
+            Password = "",
+            Padding = new Thickness(12, 8, 12, 8),
+            MinHeight = 36,
+            MinWidth = 250,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        Grid.SetColumn(keyBox, 0);
+
+        var saveButton = new Button
+        {
+            Content = "Save",
+            Margin = new Thickness(8, 0, 0, 0),
+            Padding = new Thickness(16, 8, 16, 8),
+            Background = new SolidColorBrush(_theme.AccentColor),
+            Foreground = new SolidColorBrush(Colors.White)
+        };
+        saveButton.Click += async (s, e) =>
+        {
+            var key = string.IsNullOrWhiteSpace(keyBox.Password) ? null : keyBox.Password;
+            var success = MinimaxCredentialsStore.StoreApiKey(key);
+
+            var dialog = new ContentDialog
+            {
+                Title = success ? "Minimax API Key Saved" : "Error",
+                Content = success
+                    ? (string.IsNullOrWhiteSpace(key)
+                        ? "API key cleared from secure storage."
+                        : "API key saved securely to Windows Credential Manager.")
+                    : "Failed to save API key to Windows Credential Manager.",
+                CloseButtonText = "OK",
+                XamlRoot = Content.XamlRoot
+            };
+            await dialog.ShowAsync();
+
+            keyBox.Password = "";
+            DispatcherQueue?.TryEnqueue(() => ShowPage("Providers"));
+        };
+        Grid.SetColumn(saveButton, 1);
+
+        keyGrid.Children.Add(keyBox);
+        keyGrid.Children.Add(saveButton);
+        keySection.Children.Add(keyGrid);
+
+        // Group ID (optional)
+        keySection.Children.Add(new TextBlock
+        {
+            Text = "Group ID (optional)",
+            FontSize = 12,
+            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
+            Margin = new Thickness(0, 8, 0, 0)
+        });
+
+        var groupIdBox = new TextBox
+        {
+            PlaceholderText = "Enter your Minimax Group ID",
+            Text = MinimaxCredentialsStore.GetGroupId() ?? "",
+            Padding = new Thickness(12, 8, 12, 8),
+            MinHeight = 36
+        };
+        groupIdBox.TextChanged += (s, e) =>
+        {
+            MinimaxCredentialsStore.StoreGroupId(groupIdBox.Text);
+        };
+        keySection.Children.Add(groupIdBox);
+
+        // Help text
+        var helpStack = new StackPanel { Spacing = 2, Margin = new Thickness(0, 4, 0, 0) };
+        helpStack.Children.Add(new TextBlock
+        {
+            Text = "Get your API key from platform.minimax.io",
+            FontSize = 11,
+            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
+            TextWrapping = TextWrapping.Wrap
+        });
+        helpStack.Children.Add(new TextBlock
+        {
+            Text = "Credentials stored securely in Windows Credential Manager",
+            FontSize = 10,
+            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
+            FontStyle = Windows.UI.Text.FontStyle.Italic,
+            TextWrapping = TextWrapping.Wrap
+        });
+        keySection.Children.Add(helpStack);
+
+        mainStack.Children.Add(keySection);
+        card.Child = mainStack;
+
+        return card;
+    }
+
     private FrameworkElement CreateProviderCardIcon(string providerId, string name, string colorHex)
     {
         var isDark = _theme.IsDarkMode;
@@ -2213,6 +2406,7 @@ public sealed class SettingsWindow : Window
                 "droid" => "droid-white.svg",
                 "antigravity" => "antigravity.svg",
                 "zai" => "zai-white.svg",
+                "minimax" => "minimax.svg",  // Use regular on gradient background
                 _ => null
             };
         }
@@ -2229,6 +2423,7 @@ public sealed class SettingsWindow : Window
             "droid" => isDark ? "droid-white.svg" : "droid.svg",
             "antigravity" => "antigravity.svg",  // White logo - works in dark mode, light mode handled by special case
             "zai" => isDark ? "zai-white.svg" : "zai.svg",  // Black/white based on theme
+            "minimax" => "minimax-color.svg",  // Gradient logo - visible in both modes
             _ => null
         };
     }

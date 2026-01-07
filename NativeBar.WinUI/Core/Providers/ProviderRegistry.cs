@@ -7,6 +7,7 @@ using NativeBar.WinUI.Core.Providers.Cursor;
 using NativeBar.WinUI.Core.Providers.Droid;
 using NativeBar.WinUI.Core.Providers.Gemini;
 using NativeBar.WinUI.Core.Providers.Copilot;
+using NativeBar.WinUI.Core.Providers.Minimax;
 using NativeBar.WinUI.Core.Providers.Zai;
 
 namespace NativeBar.WinUI.Core.Providers;
@@ -53,6 +54,7 @@ public class ProviderRegistry
         Register(new GeminiProviderDescriptor());
         Register(new CopilotProviderDescriptor());
         Register(new ZaiProviderDescriptor());
+        Register(new MinimaxProviderDescriptor());
     }
 }
 

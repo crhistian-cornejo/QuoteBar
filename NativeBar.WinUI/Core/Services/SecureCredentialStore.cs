@@ -206,5 +206,6 @@ public static class CredentialKeys
     public const string ZaiApiToken = "zai-api-token";
     public const string ClaudeApiToken = "claude-api-token";
     public const string CopilotToken = "copilot-token";
-    // Add more as needed
+    public const string MinimaxApiKey = "minimax-api-key";
+    public const string MinimaxGroupId = "minimax-group-id";
 }
