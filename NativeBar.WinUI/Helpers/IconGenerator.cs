@@ -209,7 +209,7 @@ public static class IconGenerator
         if (!File.Exists(pngPath))
         {
             // Try nearest size
-            pngPath = Path.Combine(assetsPath, "LOGO-NATIVE.png");
+            pngPath = Path.Combine(assetsPath, "LOGO-64.png");
         }
 
         if (File.Exists(pngPath))

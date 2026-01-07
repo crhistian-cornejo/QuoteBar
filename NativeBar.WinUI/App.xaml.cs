@@ -513,7 +513,7 @@ public class NotifyIconHelper : IDisposable
 
     public bool Create(string tooltip)
     {
-        // Load icon from LOGO-NATIVE.png
+        // Load icon from SVG or PNG
         _iconHandle = LoadLogoIcon();
 
         if (_iconHandle == IntPtr.Zero)
@@ -751,7 +751,7 @@ public class NotifyIconHelper : IDisposable
 
             // Fallback to PNG
             var appDir = AppContext.BaseDirectory;
-            var logoPath = System.IO.Path.Combine(appDir, "Assets", "LOGO-NATIVE.png");
+            var logoPath = System.IO.Path.Combine(appDir, "Assets", "LOGO-16.png");
 
             if (System.IO.File.Exists(logoPath))
             {

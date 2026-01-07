@@ -248,11 +248,14 @@ public sealed class SettingsWindow : Window
         titleBarGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         titleBarGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        // App icon
+        // App icon - use new LOGO-32.png or LOGO-24.png
         FrameworkElement iconElement;
         try
         {
-            var logoPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "LOGO-NATIVE.png");
+            var logoPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "LOGO-32.png");
+            if (!System.IO.File.Exists(logoPath))
+                logoPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "LOGO-24.png");
+
             if (System.IO.File.Exists(logoPath))
             {
                 iconElement = new Image
@@ -544,9 +547,7 @@ public sealed class SettingsWindow : Window
 
         try
         {
-            var iconPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "LOGO-NATIVE.ico");
-            if (!System.IO.File.Exists(iconPath))
-                iconPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "LOGO-NATIVE.png");
+            var iconPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico");
             if (System.IO.File.Exists(iconPath))
                 _appWindow.SetIcon(iconPath);
         }

@@ -997,7 +997,7 @@ public sealed class TrayPopupWindow : Window
             }
 
             // Final fallback to app logo
-            var logoPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "LOGO-NATIVE.png");
+            var logoPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "LOGO-64.png");
             if (System.IO.File.Exists(logoPath))
             {
                 var logoImage = new Image

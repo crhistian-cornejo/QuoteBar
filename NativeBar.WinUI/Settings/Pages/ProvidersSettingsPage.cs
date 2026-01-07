@@ -6,7 +6,9 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media.Imaging;
+using Windows.ApplicationModel.DataTransfer;
 using Microsoft.UI.Xaml.Shapes;
 using NativeBar.WinUI.Core.Providers.Claude;
 using NativeBar.WinUI.Core.Providers.Copilot;
@@ -727,15 +729,63 @@ public class ProvidersSettingsPage : ISettingsPage
 
         // Token input
         var tokenSection = new StackPanel { Spacing = 10 };
-        var inputStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
 
-        var tokenTextBox = new TextBox
+        // Row 1: token box (full width)
+        var tokenRow = new Grid();
+        tokenRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        tokenRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var tokenBox = new PasswordBox
         {
-            PlaceholderText = hasToken ? "Token saved - Enter new to replace" : "Paste your z.ai API token",
-            Width = 280,
+            PlaceholderText = hasToken ? "Token saved - paste new to replace" : "Paste your z.ai API token",
+            Height = 32,
+            MinWidth = 360
+        };
+        Grid.SetColumn(tokenBox, 0);
+
+        var toggleRevealButton = new Button
+        {
+            Content = "Show",
+            Margin = new Thickness(8, 0, 0, 0),
             Height = 32
         };
-        inputStack.Children.Add(tokenTextBox);
+        toggleRevealButton.Click += (s, e) =>
+        {
+            var isHidden = tokenBox.PasswordRevealMode != PasswordRevealMode.Visible;
+            tokenBox.PasswordRevealMode = isHidden ? PasswordRevealMode.Visible : PasswordRevealMode.Hidden;
+            toggleRevealButton.Content = isHidden ? "Hide" : "Show";
+        };
+        Grid.SetColumn(toggleRevealButton, 1);
+
+        tokenRow.Children.Add(tokenBox);
+        tokenRow.Children.Add(toggleRevealButton);
+        tokenSection.Children.Add(tokenRow);
+
+        // Row 2: actions
+        var actionsRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+
+        var pasteButton = new Button
+        {
+            Content = "Paste",
+            Height = 30
+        };
+        pasteButton.Click += async (s, e) =>
+        {
+            try
+            {
+                var data = Clipboard.GetContent();
+                if (data.Contains(StandardDataFormats.Text))
+                {
+                    var text = await data.GetTextAsync();
+                    if (!string.IsNullOrWhiteSpace(text))
+                        tokenBox.Password = text.Trim();
+                }
+            }
+            catch
+            {
+                // Ignore clipboard failures
+            }
+        };
 
         var saveButton = new Button
         {
@@ -743,11 +793,11 @@ public class ProvidersSettingsPage : ISettingsPage
             Padding = new Thickness(16, 4, 16, 4),
             Background = new SolidColorBrush(_theme.AccentColor),
             Foreground = new SolidColorBrush(Colors.White),
-            Height = 32
+            Height = 30
         };
         saveButton.Click += async (s, e) =>
         {
-            var token = string.IsNullOrWhiteSpace(tokenTextBox.Text) ? null : tokenTextBox.Text;
+            var token = string.IsNullOrWhiteSpace(tokenBox.Password) ? null : tokenBox.Password;
             var success = ZaiSettingsReader.StoreApiToken(token);
 
             if (_content?.XamlRoot != null)
@@ -766,15 +816,28 @@ public class ProvidersSettingsPage : ISettingsPage
                 await dialog.ShowAsync();
             }
 
-            tokenTextBox.Text = "";
+            tokenBox.Password = "";
+            tokenBox.PasswordRevealMode = PasswordRevealMode.Hidden;
+            toggleRevealButton.Content = "Show";
             RequestRefresh?.Invoke();
         };
-        inputStack.Children.Add(saveButton);
-        tokenSection.Children.Add(inputStack);
+
+        var openLink = new HyperlinkButton
+        {
+            Content = "Get token",
+            NavigateUri = new Uri("https://z.ai/manage-apikey/subscription"),
+            FontSize = 12,
+            Foreground = new SolidColorBrush(_theme.SecondaryTextColor)
+        };
+
+        actionsRow.Children.Add(pasteButton);
+        actionsRow.Children.Add(saveButton);
+        actionsRow.Children.Add(openLink);
+        tokenSection.Children.Add(actionsRow);
 
         tokenSection.Children.Add(new TextBlock
         {
-            Text = "Get your API token from z.ai/manage-apikey/subscription\nToken is stored securely in Windows Credential Manager",
+            Text = "Token is stored securely in Windows Credential Manager",
             FontSize = 11,
             Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
             TextWrapping = TextWrapping.Wrap,
