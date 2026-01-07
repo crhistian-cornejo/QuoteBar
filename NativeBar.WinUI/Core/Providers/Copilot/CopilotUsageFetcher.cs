@@ -282,22 +282,40 @@ public static class CopilotUsageFetcher
         // If we have internal result, merge in model data from billing
         if (internalResult != null && billingData != null && billingData.ModelUsage.Count > 0)
         {
+            Log($"Merging internal API with billing data ({billingData.ModelUsage.Count} models)");
             return MergeInternalWithBillingData(internalResult, billingData);
         }
 
-        // If only internal result, return it (no model data)
+        // If only internal result, clear the chat-based secondary that's not useful without model data
         if (internalResult != null)
         {
+            Log("Using internal API result only (no model breakdown available)");
+            // Clear secondary if it's the "chat" quota - it's not useful without model breakdown
+            // and shows confusing "0 / 0 chat" in the UI
+            if (internalResult.Secondary?.Unit == "chat")
+            {
+                return new UsageSnapshot
+                {
+                    ProviderId = internalResult.ProviderId,
+                    Primary = internalResult.Primary,
+                    Secondary = null, // Clear the confusing chat secondary
+                    Tertiary = null,
+                    Identity = internalResult.Identity,
+                    FetchedAt = internalResult.FetchedAt
+                };
+            }
             return internalResult;
         }
 
         // Fall back to billing API only
         if (billingData != null)
         {
+            Log("Using billing API result only");
             return ToUsageSnapshot(billingData, null);
         }
 
         // Both failed
+        Log("Both APIs failed - returning error");
         return new UsageSnapshot
         {
             ProviderId = "copilot",
@@ -422,7 +440,6 @@ public static class CopilotUsageFetcher
     private static UsageSnapshot ConvertInternalResponseToSnapshot(CopilotInternalUserResponse data)
     {
         RateWindow? primary = null;
-        RateWindow? secondary = null;
 
         // Primary: Premium Interactions
         var premium = data.QuotaSnapshots?.PremiumInteractions;
@@ -444,21 +461,8 @@ public static class CopilotUsageFetcher
             };
         }
 
-        // Secondary: Chat quota (if different from premium)
-        var chat = data.QuotaSnapshots?.Chat;
-        if (chat != null && chat.QuotaId != premium?.QuotaId)
-        {
-            var usedPercent = Math.Max(0, 100 - chat.PercentRemaining);
-            var used = chat.Entitlement - chat.Remaining;
-
-            secondary = new RateWindow
-            {
-                UsedPercent = usedPercent,
-                Used = used,
-                Limit = (int)chat.Entitlement,
-                Unit = "chat"
-            };
-        }
+        // Note: Secondary/Tertiary will be populated by billing API if available (model breakdown)
+        // The internal API doesn't provide useful secondary data, so we leave them null
 
         // Determine plan type from copilot_plan field
         var planLabel = data.CopilotPlan?.ToLowerInvariant() switch
@@ -480,7 +484,7 @@ public static class CopilotUsageFetcher
         {
             ProviderId = "copilot",
             Primary = primary ?? new RateWindow { UsedPercent = 0, Used = 0, Limit = 0 },
-            Secondary = secondary,
+            Secondary = null, // Will be filled by billing API if available
             Tertiary = null,
             Identity = identity,
             FetchedAt = DateTime.UtcNow
@@ -537,8 +541,12 @@ public static class CopilotUsageFetcher
         // Calculate totals from premium request usage and build model breakdown
         if (usageData.PremiumRequestUsage?.UsageItems != null)
         {
+            Log($"Processing {usageData.PremiumRequestUsage.UsageItems.Count} usage items from billing API");
+            
             foreach (var item in usageData.PremiumRequestUsage.UsageItems)
             {
+                Log($"  Item: Product={item.Product}, Model={item.Model}, Quantity={item.GrossQuantity}, SKU={item.Sku}");
+                
                 if (item.Product?.Equals("Copilot", StringComparison.OrdinalIgnoreCase) == true)
                 {
                     var quantity = item.GrossQuantity ?? 0;
@@ -559,9 +567,16 @@ public static class CopilotUsageFetcher
                         {
                             usageData.ModelUsage[modelName] = quantity;
                         }
+                        Log($"    -> Added model: {modelName} = {quantity}");
+                    }
+                    else if (quantity > 0)
+                    {
+                        Log($"    -> Item has no model name, quantity={quantity}");
                     }
                 }
             }
+            
+            Log($"Total models tracked: {usageData.ModelUsage.Count}");
             
             // Find top model
             if (usageData.ModelUsage.Count > 0)
@@ -569,7 +584,16 @@ public static class CopilotUsageFetcher
                 var topModel = usageData.ModelUsage.OrderByDescending(m => m.Value).First();
                 usageData.TopModel = topModel.Key;
                 usageData.TopModelUsage = topModel.Value;
+                Log($"Top model selected: {usageData.TopModel} with {usageData.TopModelUsage} requests");
             }
+            else
+            {
+                Log("No models found in billing data (Model field is empty in all items)");
+            }
+        }
+        else
+        {
+            Log("No usage items available from billing API");
         }
 
         // Detect plan type and set limits

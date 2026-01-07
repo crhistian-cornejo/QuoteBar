@@ -1412,43 +1412,35 @@ public sealed class SettingsWindow : Window
         mainStack.Children.Add(headerGrid);
 
         // API Token input section
-        var tokenSection = new StackPanel { Spacing = 8 };
-        tokenSection.Children.Add(new TextBlock
-        {
-            Text = "API Token",
-            FontSize = 12,
-            Foreground = new SolidColorBrush(_theme.SecondaryTextColor)
-        });
+        var tokenSection = new StackPanel { Spacing = 10 };
 
-        var tokenGrid = new Grid();
-        tokenGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        tokenGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        var tokenBox = new TextBox
+        // Row with input and button
+        var inputStack = new StackPanel
         {
-            PlaceholderText = hasToken ? "Token stored (enter new to replace)" : "Enter your z.ai API token",
-            Text = "",
-            Padding = new Thickness(12, 8, 12, 8),
-            MinHeight = 36,
-            MinWidth = 250,
-            VerticalAlignment = VerticalAlignment.Center,
-            IsEnabled = true,
-            AcceptsReturn = false
+            Orientation = Orientation.Horizontal,
+            Spacing = 8
         };
-        Grid.SetColumn(tokenBox, 0);
+
+        var tokenTextBox = new TextBox
+        {
+            PlaceholderText = hasToken ? "Token saved • Enter new to replace" : "Paste your z.ai API token",
+            Width = 280,
+            Height = 32
+        };
+        inputStack.Children.Add(tokenTextBox);
 
         var saveButton = new Button
         {
             Content = "Save",
-            Margin = new Thickness(8, 0, 0, 0),
-            Padding = new Thickness(16, 8, 16, 8),
+            Padding = new Thickness(16, 4, 16, 4),
             Background = new SolidColorBrush(_theme.AccentColor),
-            Foreground = new SolidColorBrush(Colors.White)
+            Foreground = new SolidColorBrush(Colors.White),
+            Height = 32
         };
         saveButton.Click += async (s, e) =>
         {
             // Store securely using Windows Credential Manager
-            var token = string.IsNullOrWhiteSpace(tokenBox.Text) ? null : tokenBox.Text;
+            var token = string.IsNullOrWhiteSpace(tokenTextBox.Text) ? null : tokenTextBox.Text;
             var success = ZaiSettingsReader.StoreApiToken(token);
 
             var dialog = new ContentDialog
@@ -1465,35 +1457,24 @@ public sealed class SettingsWindow : Window
             await dialog.ShowAsync();
 
             // Clear text box after save
-            tokenBox.Text = "";
+            tokenTextBox.Text = "";
 
             // Refresh the providers page to update status
             DispatcherQueue?.TryEnqueue(() => ShowPage("Providers"));
         };
-        Grid.SetColumn(saveButton, 1);
+        inputStack.Children.Add(saveButton);
+        tokenSection.Children.Add(inputStack);
 
-        tokenGrid.Children.Add(tokenBox);
-        tokenGrid.Children.Add(saveButton);
-        tokenSection.Children.Add(tokenGrid);
-
-        // Help text with security info
-        var helpStack = new StackPanel { Spacing = 2 };
-        helpStack.Children.Add(new TextBlock
+        // Help text
+        var helpText = new TextBlock
         {
-            Text = "Get your API token from z.ai/manage-apikey/subscription",
+            Text = "Get your API token from z.ai/manage-apikey/subscription\nToken is stored securely in Windows Credential Manager",
             FontSize = 11,
             Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
-            TextWrapping = TextWrapping.Wrap
-        });
-        helpStack.Children.Add(new TextBlock
-        {
-            Text = "Token is stored securely in Windows Credential Manager",
-            FontSize = 10,
-            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
-            FontStyle = Windows.UI.Text.FontStyle.Italic,
-            TextWrapping = TextWrapping.Wrap
-        });
-        tokenSection.Children.Add(helpStack);
+            TextWrapping = TextWrapping.Wrap,
+            Opacity = 0.7
+        };
+        tokenSection.Children.Add(helpText);
 
         mainStack.Children.Add(tokenSection);
         card.Child = mainStack;
@@ -1691,10 +1672,11 @@ public sealed class SettingsWindow : Window
                 break;
 
             case "cursor":
-                // Cursor: White background (dark mode) / Black background (light mode), white logo
+                // Cursor: In dark mode use white bg + black logo, in light mode use black bg + white logo
                 var cursorBgColor = isDark ? Colors.White : Colors.Black;
+                // Light mode (black bg) needs white logo, dark mode (white bg) needs black logo
                 var cursorSvgPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icons",
-                    isDark ? "cursor.svg" : "cursor-white.svg");  // Inverted: dark bg needs white logo
+                    isDark ? "cursor.svg" : "cursor-white.svg");
                 if (System.IO.File.Exists(cursorSvgPath))
                 {
                     var cursorBorder = new Border
@@ -2395,7 +2377,7 @@ public sealed class SettingsWindow : Window
             "copilot" => isDark ? "github-copilot-white.svg" : "github-copilot.svg",
             "cursor" => isDark ? "cursor-white.svg" : "cursor.svg",
             "droid" => isDark ? "droid-white.svg" : "droid.svg",
-            "antigravity" => "antigravity.svg",  // White logo - works in dark mode, light mode handled by special case
+            "antigravity" => isDark ? "antigravity.svg" : "antigravity-black.svg",  // White/black based on theme
             "zai" => isDark ? "zai-white.svg" : "zai.svg",  // Black/white based on theme
             "minimax" => "minimax-color.svg",  // Gradient logo - visible in both modes
             _ => null
