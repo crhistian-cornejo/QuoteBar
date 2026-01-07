@@ -9,19 +9,19 @@ namespace NativeBar.WinUI;
 public sealed partial class MainWindow : Window
 {
     public MainViewModel ViewModel { get; }
-    
+
     public MainWindow(ServiceProvider serviceProvider)
     {
         InitializeComponent();
         ViewModel = serviceProvider.GetRequiredService<MainViewModel>();
-        
+
         // Set window size
         AppWindow.Resize(new Windows.Graphics.SizeInt32(400, 600));
-        
+
         // Load initial data
         _ = ViewModel.RefreshAsync();
     }
-    
+
     private async void OnRefreshClick(object sender, RoutedEventArgs e)
     {
         await ViewModel.RefreshAsync();

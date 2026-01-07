@@ -6,23 +6,23 @@
 
     <Grid Background="#1a1a2e" Padding="20">
         <StackPanel Spacing="16" VerticalAlignment="Center" HorizontalAlignment="Center">
-            
+
             <TextBlock
                 Text="QuoteBar"
                 FontSize="28"
                 FontWeight="Bold"
                 Foreground="White"
                 HorizontalAlignment="Center"/>
-            
-            <TextBlock 
+
+            <TextBlock
                 Text="AI Usage Monitor"
                 FontSize="14"
                 Foreground="#888"
                 HorizontalAlignment="Center"/>
-            
-            <Border 
-                Background="#2d2d44" 
-                CornerRadius="8" 
+
+            <Border
+                Background="#2d2d44"
+                CornerRadius="8"
                 Padding="16"
                 Margin="0,20,0,0">
                 <StackPanel Spacing="8">
@@ -30,14 +30,14 @@
                     <TextBlock Text="Configure providers to start monitoring your AI usage." Foreground="#aaa" TextWrapping="Wrap"/>
                 </StackPanel>
             </Border>
-            
-            <Button 
+
+            <Button
                 x:Name="RefreshButton"
                 Content="Refresh All Providers"
                 HorizontalAlignment="Stretch"
                 Click="OnRefreshClick"
                 Margin="0,10,0,0"/>
-                
+
         </StackPanel>
     </Grid>
 </Window>
