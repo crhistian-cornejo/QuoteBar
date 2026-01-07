@@ -28,7 +28,8 @@ public static class TrayBadgeGenerator
         { "codex", Color.FromArgb(124, 58, 237) },     // #7C3AED
         { "droid", Color.FromArgb(238, 96, 24) },      // #EE6018
         { "antigravity", Color.FromArgb(255, 107, 107) }, // #FF6B6B
-        { "zai", Color.FromArgb(232, 90, 106) }        // #E85A6A
+        { "zai", Color.FromArgb(232, 90, 106) },        // #E85A6A
+        { "augment", Color.FromArgb(99, 102, 241) }     // #6366F1
     };
 
     /// <summary>
@@ -43,7 +44,8 @@ public static class TrayBadgeGenerator
         { "codex", "openai-white.svg" },
         { "droid", "droid-white.svg" },
         { "antigravity", "antigravity.svg" },
-        { "zai", "zai-white.svg" }
+        { "zai", "zai-white.svg" },
+        { "augment", "augment-white.svg" }
     };
 
     // Cache for loaded SVG bitmaps

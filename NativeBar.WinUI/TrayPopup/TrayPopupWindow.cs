@@ -527,53 +527,21 @@ public sealed class TrayPopupWindow : Window
     }
 
     /// <summary>
-    /// Create a status indicator (InfoBadge-style) for provider tabs
+    /// Create a status indicator (colored dot) for provider tabs
     /// </summary>
     private FrameworkElement CreateStatusIndicator(Windows.UI.Color statusColor, UsageSnapshot? snapshot)
     {
-        // Use InfoBadge when available, otherwise fall back to styled dot
-        try
+        // Simple colored dot indicator
+        // Note: InfoBadge styles (SuccessIconInfoBadgeStyle, etc.) are not available by default in WinUI 3
+        return new Border
         {
-            var badge = new InfoBadge
-            {
-                Width = 8,
-                Height = 8,
-                Margin = new Thickness(2, 0, 0, 0),
-                VerticalAlignment = VerticalAlignment.Center
-            };
-
-            // Determine badge style based on status
-            if (snapshot == null || snapshot.ErrorMessage != null)
-            {
-                // Gray - not configured or error
-                badge.Style = Application.Current.Resources["InformationalIconInfoBadgeStyle"] as Style;
-            }
-            else if (snapshot.IsLoading)
-            {
-                // Yellow-ish - loading
-                badge.Style = Application.Current.Resources["CautionIconInfoBadgeStyle"] as Style;
-            }
-            else
-            {
-                // Green - connected
-                badge.Style = Application.Current.Resources["SuccessIconInfoBadgeStyle"] as Style;
-            }
-
-            return badge;
-        }
-        catch
-        {
-            // Fallback to simple colored dot if InfoBadge styles not available
-            return new Border
-            {
-                Width = 6,
-                Height = 6,
-                CornerRadius = new CornerRadius(3),
-                Background = new SolidColorBrush(statusColor),
-                Margin = new Thickness(2, 0, 0, 0),
-                VerticalAlignment = VerticalAlignment.Center
-            };
-        }
+            Width = 6,
+            Height = 6,
+            CornerRadius = new CornerRadius(3),
+            Background = new SolidColorBrush(statusColor),
+            Margin = new Thickness(2, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
     }
 
     /// <summary>

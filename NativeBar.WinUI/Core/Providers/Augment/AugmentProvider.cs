@@ -24,11 +24,54 @@ public sealed class AugmentProviderDescriptor : ProviderDescriptor
     public override string? DashboardUrl => "https://app.augmentcode.com/account/subscription";
     public override bool SupportsOAuth => false;
     public override bool SupportsWebScraping => true;
-    public override bool SupportsCLI => false;
+    public override bool SupportsCLI => true; // Now supports CLI session.json
 
     protected override void InitializeStrategies()
     {
+        // Priority 10: CLI session.json (preferred - uses user's own authenticated session)
+        AddStrategy(new AugmentSessionFetchStrategy());
+
+        // Priority 1: Cookie fallback (manual configuration)
         AddStrategy(new AugmentCookieFetchStrategy());
+    }
+}
+
+/// <summary>
+/// Fetch strategy using Augment CLI session.json
+/// This is the preferred method as it uses the user's own authenticated CLI session.
+///
+/// Checks in order:
+/// 1. AUGMENT_SESSION_AUTH environment variable
+/// 2. ~/.augment/session.json (created by 'augment login')
+/// </summary>
+public sealed class AugmentSessionFetchStrategy : IProviderFetchStrategy
+{
+    public string StrategyName => "CLI Session";
+    public int Priority => 10; // Higher priority than cookie
+
+    public Task<bool> CanExecuteAsync()
+    {
+        return Task.FromResult(AugmentSessionStore.HasSession());
+    }
+
+    public async Task<UsageSnapshot> FetchAsync(CancellationToken cancellationToken = default)
+    {
+        var session = AugmentSessionStore.TryLoad();
+
+        if (session == null || !session.IsValid)
+        {
+            return new UsageSnapshot
+            {
+                ProviderId = "augment",
+                ErrorMessage = "No Augment CLI session. Run 'augment login' or set AUGMENT_SESSION_AUTH.",
+                FetchedAt = DateTime.UtcNow
+            };
+        }
+
+        DebugLogger.Log("AugmentSessionFetchStrategy", $"Using session from {session.Source}");
+
+        var fetcher = new AugmentUsageFetcher();
+        return await fetcher.FetchWithTokenAsync(session.AccessToken, cancellationToken);
     }
 }
 
@@ -144,19 +187,75 @@ public sealed class AugmentUsageFetcher
     };
 
     /// <summary>
-    /// Fetch usage data from Augment APIs
+    /// Fetch usage data using Bearer token (from CLI session)
+    /// </summary>
+    public async Task<UsageSnapshot> FetchWithTokenAsync(string accessToken, CancellationToken cancellationToken = default)
+    {
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(TimeoutSeconds) };
+
+        try
+        {
+            DebugLogger.Log("AugmentUsageFetcher", "Fetching with Bearer token...");
+
+            // Fetch credits (required)
+            var creditsResult = await FetchCreditsWithTokenAsync(client, accessToken, cancellationToken);
+
+            // Fetch subscription (optional)
+            AugmentSubscriptionResponse? subscription = null;
+            try
+            {
+                subscription = await FetchSubscriptionWithTokenAsync(client, accessToken, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.Log("AugmentUsageFetcher", $"Subscription fetch failed (optional): {ex.Message}");
+            }
+
+            return BuildSnapshot(creditsResult, subscription);
+        }
+        catch (AugmentFetchException ex)
+        {
+            DebugLogger.LogError("AugmentUsageFetcher", ex.Message, ex);
+
+            // Invalidate session cache if auth failed
+            if (ex.Message.Contains("expired") || ex.Message.Contains("Unauthorized"))
+            {
+                AugmentSessionStore.InvalidateCache();
+            }
+
+            return new UsageSnapshot
+            {
+                ProviderId = "augment",
+                ErrorMessage = ex.Message,
+                FetchedAt = DateTime.UtcNow
+            };
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("AugmentUsageFetcher", "Unexpected error", ex);
+            return new UsageSnapshot
+            {
+                ProviderId = "augment",
+                ErrorMessage = $"Error: {ex.Message}",
+                FetchedAt = DateTime.UtcNow
+            };
+        }
+    }
+
+    /// <summary>
+    /// Fetch usage data using cookies (fallback)
     /// </summary>
     public async Task<UsageSnapshot> FetchAsync(string cookieHeader, CancellationToken cancellationToken = default)
     {
         using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(TimeoutSeconds) };
-        
+
         try
         {
-            DebugLogger.Log("AugmentUsageFetcher", "Fetching credits and subscription...");
+            DebugLogger.Log("AugmentUsageFetcher", "Fetching with cookie...");
 
             // Fetch credits (required)
             var creditsResult = await FetchCreditsAsync(client, cookieHeader, cancellationToken);
-            
+
             // Fetch subscription (optional - provides plan name and billing cycle)
             AugmentSubscriptionResponse? subscription = null;
             try
@@ -190,6 +289,57 @@ public sealed class AugmentUsageFetcher
                 FetchedAt = DateTime.UtcNow
             };
         }
+    }
+
+    private async Task<AugmentCreditsResponse> FetchCreditsWithTokenAsync(
+        HttpClient client, string accessToken, CancellationToken cancellationToken)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, $"{BaseUrl}{CreditsPath}");
+        request.Headers.Add("Authorization", $"Bearer {accessToken}");
+        request.Headers.Add("Accept", "application/json");
+        request.Headers.Add("User-Agent", "QuoteBar");
+
+        var response = await client.SendAsync(request, cancellationToken);
+        var content = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        DebugLogger.Log("AugmentUsageFetcher", $"Credits API (token): Status={response.StatusCode}");
+
+        if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized ||
+            response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+        {
+            AugmentSessionStore.InvalidateCache();
+            throw new AugmentFetchException("Session expired. Please run 'augment login' again.");
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new AugmentFetchException($"API error: HTTP {(int)response.StatusCode}");
+        }
+
+        var credits = JsonSerializer.Deserialize<AugmentCreditsResponse>(content, JsonOptions);
+        return credits ?? throw new AugmentFetchException("Invalid credits response");
+    }
+
+    private async Task<AugmentSubscriptionResponse> FetchSubscriptionWithTokenAsync(
+        HttpClient client, string accessToken, CancellationToken cancellationToken)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, $"{BaseUrl}{SubscriptionPath}");
+        request.Headers.Add("Authorization", $"Bearer {accessToken}");
+        request.Headers.Add("Accept", "application/json");
+        request.Headers.Add("User-Agent", "QuoteBar");
+
+        var response = await client.SendAsync(request, cancellationToken);
+        var content = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        DebugLogger.Log("AugmentUsageFetcher", $"Subscription API (token): Status={response.StatusCode}");
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new AugmentFetchException($"Subscription API error: HTTP {(int)response.StatusCode}");
+        }
+
+        var subscription = JsonSerializer.Deserialize<AugmentSubscriptionResponse>(content, JsonOptions);
+        return subscription ?? throw new AugmentFetchException("Invalid subscription response");
     }
 
     private async Task<AugmentCreditsResponse> FetchCreditsAsync(

@@ -57,8 +57,6 @@ public partial class App : Application
                 e.Handled = true;
             };
 
-            // NOTE: XamlControlsResources removed - causes crash in unpackaged WinUI 3 apps
-            // The app works fine without it; basic WinUI controls still render correctly
             InitializeComponent();
 
             // Ensure icons are generated from SVG

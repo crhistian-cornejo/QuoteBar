@@ -33,6 +33,7 @@ public static class ProviderIconHelper
                 "antigravity" => "antigravity.svg",
                 "zai" => "zai-white.svg",
                 "minimax" => "minimax-white.svg",
+                "augment" => "augment-white.svg",
                 _ => null
             };
         }
@@ -49,6 +50,7 @@ public static class ProviderIconHelper
             "antigravity" => isDark ? "antigravity.svg" : "antigravity-black.svg",
             "zai" => isDark ? "zai-white.svg" : "zai.svg",
             "minimax" => "minimax-color.svg",
+            "augment" => isDark ? "augment-white.svg" : "augment.svg",
             _ => null
         };
     }
