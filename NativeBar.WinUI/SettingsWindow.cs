@@ -1672,11 +1672,8 @@ public sealed class SettingsWindow : Window
                 break;
 
             case "cursor":
-                // Cursor: In dark mode use white bg + black logo, in light mode use black bg + white logo
-                var cursorBgColor = isDark ? Colors.White : Colors.Black;
-                // Light mode (black bg) needs white logo, dark mode (white bg) needs black logo
-                var cursorSvgPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icons",
-                    isDark ? "cursor.svg" : "cursor-white.svg");
+                // Cursor: black bg + white logo (always, for visibility in both modes)
+                var cursorSvgPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icons", "cursor-white.svg");
                 if (System.IO.File.Exists(cursorSvgPath))
                 {
                     var cursorBorder = new Border
@@ -1684,7 +1681,7 @@ public sealed class SettingsWindow : Window
                         Width = 36,
                         Height = 36,
                         CornerRadius = new CornerRadius(8),
-                        Background = new SolidColorBrush(cursorBgColor),
+                        Background = new SolidColorBrush(Colors.Black),
                         Padding = new Thickness(6)
                     };
                     cursorBorder.Child = new Image

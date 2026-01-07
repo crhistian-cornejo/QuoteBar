@@ -329,11 +329,30 @@ public static class CopilotUsageFetcher
     /// </summary>
     private static UsageSnapshot MergeInternalWithBillingData(UsageSnapshot internalResult, CopilotUsageData billingData)
     {
+        RateWindow? primary = internalResult.Primary;
         RateWindow? secondary = null;
         RateWindow? tertiary = null;
 
-        // Get total usage for percentage calculation
+        // Get total usage from billing API (has decimals)
         double totalUsed = billingData.TotalPremiumRequestsUsed;
+
+        // Update Primary with decimal values from billing API if available
+        if (totalUsed > 0 && primary != null)
+        {
+            var limit = primary.Limit ?? billingData.IncludedRequestsLimit;
+            var usedPercent = limit > 0 ? (totalUsed / limit.Value) * 100 : primary.UsedPercent;
+
+            primary = new RateWindow
+            {
+                UsedPercent = usedPercent,
+                Used = totalUsed,  // Use decimal value from billing API
+                Limit = limit,
+                WindowMinutes = primary.WindowMinutes,
+                ResetsAt = primary.ResetsAt,
+                ResetDescription = primary.ResetDescription,
+                Unit = primary.Unit
+            };
+        }
 
         // Secondary: Top model
         if (!string.IsNullOrEmpty(billingData.TopModel) && billingData.TopModelUsage > 0)
@@ -377,7 +396,7 @@ public static class CopilotUsageFetcher
         return new UsageSnapshot
         {
             ProviderId = internalResult.ProviderId,
-            Primary = internalResult.Primary,
+            Primary = primary,
             Secondary = secondary ?? internalResult.Secondary,
             Tertiary = tertiary ?? internalResult.Tertiary,
             Identity = internalResult.Identity,
@@ -464,15 +483,15 @@ public static class CopilotUsageFetcher
         // Note: Secondary/Tertiary will be populated by billing API if available (model breakdown)
         // The internal API doesn't provide useful secondary data, so we leave them null
 
-        // Determine plan type from copilot_plan field
-        var planLabel = data.CopilotPlan?.ToLowerInvariant() switch
+        // Determine plan type based on entitlement (quota limit) - this is the most reliable indicator
+        // Pro+ = 1500, Pro = 300, Free = 50
+        var entitlement = premium?.Entitlement ?? 0;
+        var planLabel = entitlement switch
         {
-            "individual" or "pro" => "Copilot Pro",
-            "individual_plus" or "pro_plus" => "Copilot Pro+",
-            "free" => "Copilot Free",
-            "business" => "Copilot Business",
-            "enterprise" => "Copilot Enterprise",
-            _ => $"Copilot {data.CopilotPlan ?? "Unknown"}"
+            >= 1000 => "Copilot Pro+",      // 1500 requests = Pro+
+            >= 200 => "Copilot Pro",         // 300 requests = Pro
+            >= 30 => "Copilot Free",         // 50 requests = Free
+            _ => DetectPlanFromString(data.CopilotPlan) // Fallback to string parsing
         };
 
         var identity = new ProviderIdentity
@@ -488,6 +507,22 @@ public static class CopilotUsageFetcher
             Tertiary = null,
             Identity = identity,
             FetchedAt = DateTime.UtcNow
+        };
+    }
+
+    /// <summary>
+    /// Fallback plan detection from copilot_plan string when entitlement is not available
+    /// </summary>
+    private static string DetectPlanFromString(string? copilotPlan)
+    {
+        return copilotPlan?.ToLowerInvariant() switch
+        {
+            "individual_plus" or "pro_plus" or "individual_pro_plus" or "pro+" => "Copilot Pro+",
+            "individual" or "pro" or "individual_pro" => "Copilot Pro",
+            "free" or "individual_free" => "Copilot Free",
+            "business" => "Copilot Business",
+            "enterprise" => "Copilot Enterprise",
+            _ => "Copilot" // Unknown plan
         };
     }
 
