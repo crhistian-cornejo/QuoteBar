@@ -54,7 +54,7 @@ public class ProviderRegistry
         Register(new GeminiProviderDescriptor());
         Register(new CopilotProviderDescriptor());
         Register(new ZaiProviderDescriptor());
-        Register(new MinimaxProviderDescriptor());
+        // Minimax temporarily disabled
     }
 }
 

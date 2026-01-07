@@ -183,6 +183,12 @@ public sealed class CursorStatusSnapshot
     /// <summary>Percentage of included plan usage (0-100)</summary>
     public double PlanPercentUsed { get; init; }
 
+    /// <summary>Auto model usage percentage (0-100) - for auto-selected models</summary>
+    public double? AutoPercentUsed { get; init; }
+
+    /// <summary>API usage percentage (0-100) - for named/specific models</summary>
+    public double? ApiPercentUsed { get; init; }
+
     /// <summary>Included plan usage in USD</summary>
     public double PlanUsedUSD { get; init; }
 
@@ -226,7 +232,8 @@ public sealed class CursorStatusSnapshot
     /// <summary>Convert to UsageSnapshot for the common provider interface</summary>
     public UsageSnapshot ToUsageSnapshot()
     {
-        // Primary: For legacy request-based plans, use request usage; otherwise use plan percentage
+        // PRIMARY: Total plan usage (totalPercentUsed) 
+        // This is the overall usage combining Auto + API
         double primaryUsedPercent;
         if (IsLegacyRequestPlan && RequestsUsed.HasValue && RequestsLimit.HasValue && RequestsLimit.Value > 0)
         {
@@ -234,7 +241,7 @@ public sealed class CursorStatusSnapshot
         }
         else
         {
-            primaryUsedPercent = PlanPercentUsed;
+            primaryUsedPercent = PlanPercentUsed; // totalPercentUsed from API
         }
 
         var primary = new RateWindow
@@ -242,19 +249,37 @@ public sealed class CursorStatusSnapshot
             UsedPercent = primaryUsedPercent,
             WindowMinutes = null,
             ResetsAt = BillingCycleEnd,
-            ResetDescription = BillingCycleEnd.HasValue ? FormatResetDate(BillingCycleEnd.Value) : null
+            ResetDescription = BillingCycleEnd.HasValue ? FormatResetDate(BillingCycleEnd.Value) : null,
+            Label = "Total"
         };
 
-        // Secondary: On-demand usage as percentage of individual limit
+        // SECONDARY: Auto model usage (autoPercentUsed)
+        // Usage when Cursor automatically selects the model
         RateWindow? secondary = null;
-        if (OnDemandLimitUSD.HasValue && OnDemandLimitUSD.Value > 0)
+        if (AutoPercentUsed.HasValue)
         {
             secondary = new RateWindow
             {
-                UsedPercent = (OnDemandUsedUSD / OnDemandLimitUSD.Value) * 100,
+                UsedPercent = AutoPercentUsed.Value,
                 WindowMinutes = null,
                 ResetsAt = BillingCycleEnd,
-                ResetDescription = BillingCycleEnd.HasValue ? FormatResetDate(BillingCycleEnd.Value) : null
+                ResetDescription = BillingCycleEnd.HasValue ? FormatResetDate(BillingCycleEnd.Value) : null,
+                Label = "Auto"
+            };
+        }
+
+        // TERTIARY: API/Named model usage (apiPercentUsed)
+        // Usage when user selects a specific model (claude, gpt, etc.)
+        RateWindow? tertiary = null;
+        if (ApiPercentUsed.HasValue)
+        {
+            tertiary = new RateWindow
+            {
+                UsedPercent = ApiPercentUsed.Value,
+                WindowMinutes = null,
+                ResetsAt = BillingCycleEnd,
+                ResetDescription = BillingCycleEnd.HasValue ? FormatResetDate(BillingCycleEnd.Value) : null,
+                Label = "API"
             };
         }
 
@@ -275,7 +300,7 @@ public sealed class CursorStatusSnapshot
             ProviderId = "cursor",
             Primary = primary,
             Secondary = secondary,
-            Tertiary = null,
+            Tertiary = tertiary,
             Cost = cost,
             Identity = new ProviderIdentity
             {
@@ -485,15 +510,19 @@ public static class CursorUsageFetcher
         double planUsed = planUsedRaw / 100.0;
         double planLimit = planLimitRaw / 100.0;
 
+        // PRIORITY: Use totalPercentUsed from API first (matches Cursor's display message)
+        // Fallback to calculated value only if API doesn't provide it
         double planPercentUsed;
-        if (planLimitRaw > 0)
+        if (summary.IndividualUsage?.Plan?.TotalPercentUsed.HasValue == true)
         {
-            planPercentUsed = (planUsedRaw / planLimitRaw) * 100;
-        }
-        else if (summary.IndividualUsage?.Plan?.TotalPercentUsed.HasValue == true)
-        {
+            // Use the exact percentage Cursor provides (e.g., 25.49%)
             var pct = summary.IndividualUsage.Plan.TotalPercentUsed.Value;
             planPercentUsed = pct <= 1 ? pct * 100 : pct;
+        }
+        else if (planLimitRaw > 0)
+        {
+            // Fallback: calculate from used/total
+            planPercentUsed = (planUsedRaw / planLimitRaw) * 100;
         }
         else
         {
@@ -516,9 +545,15 @@ public static class CursorUsageFetcher
         int? requestsUsed = requestUsage?.Gpt4?.NumRequestsTotal ?? requestUsage?.Gpt4?.NumRequests;
         int? requestsLimit = requestUsage?.Gpt4?.MaxRequestUsage;
 
+        // Extract Auto and API percentages directly from API
+        double? autoPercentUsed = summary.IndividualUsage?.Plan?.AutoPercentUsed;
+        double? apiPercentUsed = summary.IndividualUsage?.Plan?.ApiPercentUsed;
+
         return new CursorStatusSnapshot
         {
             PlanPercentUsed = planPercentUsed,
+            AutoPercentUsed = autoPercentUsed,
+            ApiPercentUsed = apiPercentUsed,
             PlanUsedUSD = planUsed,
             PlanLimitUSD = planLimit,
             OnDemandUsedUSD = onDemandUsed,

@@ -1036,10 +1036,12 @@ public sealed class TrayPopupWindow : Window
             "cursor" => "https://cursor.com/settings",
             "droid" => "https://app.factory.ai/settings/usage",
             "antigravity" => "https://antigravity.ai/dashboard",
+            "zai" => "https://z.ai/manage-apikey/subscription",
+            "minimax" => "https://platform.minimax.io",
             _ => null
         };
     }
-    
+
     private string? GetStatusPageUrl(string providerId)
     {
         return providerId.ToLower() switch
@@ -1051,6 +1053,8 @@ public sealed class TrayPopupWindow : Window
             "cursor" => "https://status.cursor.com/",
             "droid" => "https://status.factory.ai/",
             "antigravity" => "https://status.antigravity.ai/",
+            "zai" => null,
+            "minimax" => null,
             _ => null
         };
     }
@@ -1358,7 +1362,7 @@ public sealed class TrayPopupWindow : Window
         if (snapshot.Primary != null)
         {
             AddUsageSection(
-                provider.PrimaryLabel,
+                snapshot.Primary.Label ?? provider.PrimaryLabel,
                 snapshot.Primary.UsedPercent,
                 snapshot.Primary,
                 _viewModel.FormatUsage(snapshot.Primary),
@@ -1370,7 +1374,7 @@ public sealed class TrayPopupWindow : Window
         if (snapshot.Secondary != null)
         {
             AddUsageSection(
-                provider.SecondaryLabel,
+                snapshot.Secondary.Label ?? provider.SecondaryLabel,
                 snapshot.Secondary.UsedPercent,
                 snapshot.Secondary,
                 _viewModel.FormatUsage(snapshot.Secondary),
@@ -1383,7 +1387,7 @@ public sealed class TrayPopupWindow : Window
         if (snapshot.Tertiary != null)
         {
             AddUsageSection(
-                provider.TertiaryLabel ?? "Extra",
+                snapshot.Tertiary.Label ?? provider.TertiaryLabel ?? "Extra",
                 snapshot.Tertiary.UsedPercent,
                 snapshot.Tertiary,
                 _viewModel.FormatUsage(snapshot.Tertiary),

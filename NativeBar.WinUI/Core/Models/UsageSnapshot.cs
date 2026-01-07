@@ -15,6 +15,8 @@ public record RateWindow
     public double? Used { get; init; }
     public double? Limit { get; init; }
     public string? Unit { get; init; }
+    /// <summary>Display label for this usage window (e.g., "Auto", "API", "On-Demand")</summary>
+    public string? Label { get; init; }
 }
 
 /// <summary>

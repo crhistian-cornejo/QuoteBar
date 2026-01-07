@@ -658,8 +658,6 @@ public sealed class SettingsWindow : Window
             stack.Children.Add(CreateProviderCardWithAutoDetect("Antigravity", "antigravity", "#FF6B6B"));
             DebugLogger.Log("SettingsWindow", "CreateProvidersSettings: Creating Zai card");
             stack.Children.Add(CreateZaiProviderCard());
-            DebugLogger.Log("SettingsWindow", "CreateProvidersSettings: Creating Minimax card");
-            stack.Children.Add(CreateMinimaxProviderCard());
 
             DebugLogger.Log("SettingsWindow", "CreateProvidersSettings DONE");
             scroll.Content = stack;
@@ -1538,20 +1536,16 @@ public sealed class SettingsWindow : Window
                     new GradientStop { Color = ParseColor("#E2167E"), Offset = 0 },
                     new GradientStop { Color = ParseColor("#FE603C"), Offset = 1 }
                 }
-            }
-        };
-        var svgPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icons", "minimax.svg");
-        if (System.IO.File.Exists(svgPath))
-        {
-            iconBorder.Child = new Image
+            },
+            Child = new FontIcon
             {
-                Width = 20,
-                Height = 20,
-                Source = new SvgImageSource(new Uri(svgPath)),
+                Glyph = "\uE945",
+                FontSize = 18,
+                Foreground = new SolidColorBrush(Colors.White),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
-            };
-        }
+            }
+        };
         Grid.SetColumn(iconBorder, 0);
 
         // Info
@@ -1587,29 +1581,31 @@ public sealed class SettingsWindow : Window
         headerGrid.Children.Add(infoStack);
         mainStack.Children.Add(headerGrid);
 
-        // API Key input section
-        var keySection = new StackPanel { Spacing = 8 };
-        keySection.Children.Add(new TextBlock
+        // API Key input section (same pattern as Zai)
+        var tokenSection = new StackPanel { Spacing = 8 };
+        tokenSection.Children.Add(new TextBlock
         {
             Text = "API Key",
             FontSize = 12,
             Foreground = new SolidColorBrush(_theme.SecondaryTextColor)
         });
 
-        var keyGrid = new Grid();
-        keyGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        keyGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var tokenGrid = new Grid();
+        tokenGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        tokenGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var keyBox = new PasswordBox
+        var tokenBox = new TextBox
         {
             PlaceholderText = hasCredentials ? "Key stored (enter new to replace)" : "Enter your Minimax API key",
-            Password = "",
+            Text = "",
             Padding = new Thickness(12, 8, 12, 8),
             MinHeight = 36,
             MinWidth = 250,
-            VerticalAlignment = VerticalAlignment.Center
+            VerticalAlignment = VerticalAlignment.Center,
+            IsEnabled = true,
+            AcceptsReturn = false
         };
-        Grid.SetColumn(keyBox, 0);
+        Grid.SetColumn(tokenBox, 0);
 
         var saveButton = new Button
         {
@@ -1621,7 +1617,7 @@ public sealed class SettingsWindow : Window
         };
         saveButton.Click += async (s, e) =>
         {
-            var key = string.IsNullOrWhiteSpace(keyBox.Password) ? null : keyBox.Password;
+            var key = string.IsNullOrWhiteSpace(tokenBox.Text) ? null : tokenBox.Text;
             var success = MinimaxCredentialsStore.StoreApiKey(key);
 
             var dialog = new ContentDialog
@@ -1637,39 +1633,17 @@ public sealed class SettingsWindow : Window
             };
             await dialog.ShowAsync();
 
-            keyBox.Password = "";
+            tokenBox.Text = "";
             DispatcherQueue?.TryEnqueue(() => ShowPage("Providers"));
         };
         Grid.SetColumn(saveButton, 1);
 
-        keyGrid.Children.Add(keyBox);
-        keyGrid.Children.Add(saveButton);
-        keySection.Children.Add(keyGrid);
-
-        // Group ID (optional)
-        keySection.Children.Add(new TextBlock
-        {
-            Text = "Group ID (optional)",
-            FontSize = 12,
-            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
-            Margin = new Thickness(0, 8, 0, 0)
-        });
-
-        var groupIdBox = new TextBox
-        {
-            PlaceholderText = "Enter your Minimax Group ID",
-            Text = MinimaxCredentialsStore.GetGroupId() ?? "",
-            Padding = new Thickness(12, 8, 12, 8),
-            MinHeight = 36
-        };
-        groupIdBox.TextChanged += (s, e) =>
-        {
-            MinimaxCredentialsStore.StoreGroupId(groupIdBox.Text);
-        };
-        keySection.Children.Add(groupIdBox);
+        tokenGrid.Children.Add(tokenBox);
+        tokenGrid.Children.Add(saveButton);
+        tokenSection.Children.Add(tokenGrid);
 
         // Help text
-        var helpStack = new StackPanel { Spacing = 2, Margin = new Thickness(0, 4, 0, 0) };
+        var helpStack = new StackPanel { Spacing = 2 };
         helpStack.Children.Add(new TextBlock
         {
             Text = "Get your API key from platform.minimax.io",
@@ -1679,15 +1653,15 @@ public sealed class SettingsWindow : Window
         });
         helpStack.Children.Add(new TextBlock
         {
-            Text = "Credentials stored securely in Windows Credential Manager",
+            Text = "Key is stored securely in Windows Credential Manager",
             FontSize = 10,
             Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
             FontStyle = Windows.UI.Text.FontStyle.Italic,
             TextWrapping = TextWrapping.Wrap
         });
-        keySection.Children.Add(helpStack);
+        tokenSection.Children.Add(helpStack);
 
-        mainStack.Children.Add(keySection);
+        mainStack.Children.Add(tokenSection);
         card.Child = mainStack;
 
         return card;

@@ -89,7 +89,7 @@ public class AppSettings
     public bool PlaySound { get; set; } = false;
 
     // Provider visibility (which providers show in popup)
-    public HashSet<string> EnabledProviders { get; set; } = new() { "codex", "claude", "cursor", "gemini", "copilot", "droid", "zai" };
+    public HashSet<string> EnabledProviders { get; set; } = new() { "codex", "claude", "cursor", "gemini", "copilot", "droid", "antigravity", "zai" };
 
     // Provider configs
     public Dictionary<string, ProviderConfig> Providers { get; set; } = new();
