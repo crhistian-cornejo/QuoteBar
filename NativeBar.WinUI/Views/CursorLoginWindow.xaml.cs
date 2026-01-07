@@ -2,6 +2,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.Web.WebView2.Core;
 using NativeBar.WinUI.Core.Providers.Cursor;
+using NativeBar.WinUI.Core.Services;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -334,12 +335,7 @@ public sealed partial class CursorLoginWindow : Window
 
     private static void Log(string message)
     {
-        try
-        {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] CursorLoginWindow: {message}\n");
-        }
-        catch { }
+        DebugLogger.Log("CursorLoginWindow", message);
     }
 }
 

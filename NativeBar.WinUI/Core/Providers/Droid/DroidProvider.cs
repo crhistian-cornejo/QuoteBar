@@ -14,6 +14,7 @@ public class DroidProviderDescriptor : ProviderDescriptor
     public override string SecondaryColor => "#34D399";
     public override string PrimaryLabel => "Session usage";
     public override string SecondaryLabel => "Daily limit";
+public override string? DashboardUrl => "https://factory.ai/settings";
 
     public override bool SupportsOAuth => false;
     public override bool SupportsCLI => true;

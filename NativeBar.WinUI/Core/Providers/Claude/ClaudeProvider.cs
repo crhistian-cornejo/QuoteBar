@@ -1,4 +1,5 @@
 using NativeBar.WinUI.Core.Models;
+using NativeBar.WinUI.Core.Services;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -15,6 +16,12 @@ public class ClaudeProviderDescriptor : ProviderDescriptor
     public override string PrimaryLabel => "Session";
     public override string SecondaryLabel => "Weekly";
     public override string? TertiaryLabel => "Sonnet";
+
+    // Session resets every 5h, notify each time; Weekly notify only once
+    public override UsageWindowType PrimaryWindowType => UsageWindowType.Session;
+    public override UsageWindowType SecondaryWindowType => UsageWindowType.Weekly;
+
+    public override string? DashboardUrl => "https://claude.ai/settings/usage";
 
     public override bool SupportsOAuth => true;
     public override bool SupportsCLI => true;
@@ -46,28 +53,24 @@ public class ClaudeOAuthStrategy : IProviderFetchStrategy
             _cachedCredentials = ClaudeOAuthCredentialsStore.TryLoad();
             if (_cachedCredentials == null)
             {
-                System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                    $"[{DateTime.Now}] ClaudeOAuthStrategy.CanExecute: No credentials found\n");
+                DebugLogger.Log("ClaudeOAuthStrategy", "CanExecute: No credentials found");
                 return Task.FromResult(false);
             }
 
             if (_cachedCredentials.IsExpired)
             {
-                System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                    $"[{DateTime.Now}] ClaudeOAuthStrategy.CanExecute: Credentials expired at {_cachedCredentials.ExpiresAt}\n");
+                DebugLogger.Log("ClaudeOAuthStrategy", $"CanExecute: Credentials expired at {_cachedCredentials.ExpiresAt}");
                 // TODO: Implement token refresh
                 return Task.FromResult(false);
             }
 
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] ClaudeOAuthStrategy.CanExecute: Found valid credentials, tier={_cachedCredentials.RateLimitTier}, scopes=[{string.Join(", ", _cachedCredentials.Scopes)}]\n");
+            DebugLogger.Log("ClaudeOAuthStrategy", $"CanExecute: Found valid credentials, tier={_cachedCredentials.RateLimitTier}, scopes=[{string.Join(", ", _cachedCredentials.Scopes)}]");
 
             return Task.FromResult(true);
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] ClaudeOAuthStrategy.CanExecute ERROR: {ex.Message}\n");
+            DebugLogger.LogError("ClaudeOAuthStrategy", "CanExecute error", ex);
             return Task.FromResult(false);
         }
     }
@@ -108,8 +111,7 @@ public class ClaudeOAuthStrategy : IProviderFetchStrategy
         }
         catch (ClaudeOAuthFetchException ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] ClaudeOAuthStrategy.Fetch ERROR: {ex.ErrorType} - {ex.Message}\n");
+            DebugLogger.LogError("ClaudeOAuthStrategy", $"Fetch error: {ex.ErrorType}", ex);
 
             return new UsageSnapshot
             {
@@ -120,8 +122,7 @@ public class ClaudeOAuthStrategy : IProviderFetchStrategy
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] ClaudeOAuthStrategy.Fetch ERROR: {ex.Message}\n{ex.StackTrace}\n");
+            DebugLogger.LogError("ClaudeOAuthStrategy", "Fetch error", ex);
 
             return new UsageSnapshot
             {
@@ -189,8 +190,7 @@ public class ClaudeCLIStrategy : IProviderFetchStrategy
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] ClaudeCLIStrategy ERROR: {ex.Message}\n{ex.StackTrace}\n");
+            DebugLogger.LogError("ClaudeCLIStrategy", "Fetch error", ex);
 
             return new UsageSnapshot
             {
@@ -228,8 +228,7 @@ public class ClaudeCLIStrategy : IProviderFetchStrategy
                 }
             };
 
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] ClaudeCLIStrategy: Running claude --print \"/usage\"\n");
+            DebugLogger.Log("ClaudeCLIStrategy", "Running claude --print \"/usage\"");
 
             using var process = Process.Start(startInfo);
             if (process == null)
@@ -247,8 +246,7 @@ public class ClaudeCLIStrategy : IProviderFetchStrategy
 
             await process.WaitForExitAsync(cts.Token);
 
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] ClaudeCLIStrategy --print output:\n{output}\nstderr: {error}\n");
+            DebugLogger.Log("ClaudeCLIStrategy", $"--print output: {output.Substring(0, Math.Min(200, output.Length))}...");
 
             // Strip ANSI codes
             output = StripAnsiCodes(output);
@@ -263,8 +261,7 @@ public class ClaudeCLIStrategy : IProviderFetchStrategy
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] ClaudeCLIStrategy PTY failed: {ex.Message}, falling back to direct\n");
+            DebugLogger.Log("ClaudeCLIStrategy", $"PTY failed: {ex.Message}, falling back to direct");
             return await RunClaudeCommandAsync("usage", cancellationToken);
         }
     }
@@ -300,8 +297,7 @@ public class ClaudeCLIStrategy : IProviderFetchStrategy
 
             await process.WaitForExitAsync(cts.Token);
 
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] claude {command} output:\n{output}\nstderr: {error}\n");
+            DebugLogger.Log("ClaudeCLIStrategy", $"claude {command} output: {output.Substring(0, Math.Min(200, output.Length))}...");
 
             return StripAnsiCodes(output);
         }

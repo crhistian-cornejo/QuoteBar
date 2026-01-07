@@ -23,6 +23,7 @@ public partial class App : Application
     private PopupStateManager? _popupState;
     private TaskbarOverlayHelper? _taskbarOverlay;
     private UsageStore? _usageStore;
+    private HotkeyService? _hotkeyService;
 
     /// <summary>
     /// Gets the service provider for dependency injection
@@ -111,6 +112,13 @@ public partial class App : Application
             // Subscribe to settings changes (for tray badge toggle)
             SettingsService.Instance.SettingsChanged += OnSettingsChanged;
 
+            // Initialize global hotkey service - TEMPORARILY DISABLED
+            // TODO: Re-enable after fixing crash
+            // _hotkeyService = HotkeyService.Instance;
+            // _hotkeyService.TogglePopupRequested += () => _dispatcherQueue?.TryEnqueue(OnHotkeyTogglePopup);
+            // _hotkeyService.Initialize(hwnd);
+            // _notifyIcon.SetHotkeyService(_hotkeyService);
+
             // Activate and hide
             _hiddenWindow.Activate();
             ShowWindow(hwnd, 0);
@@ -151,9 +159,23 @@ public partial class App : Application
     private void OnExitClick()
     {
         DebugLogger.Log("App", "Exiting...");
+        _hotkeyService?.Dispose();
         _taskbarOverlay?.Dispose();
         _notifyIcon?.Dispose();
         Application.Current.Exit();
+    }
+
+    private void OnHotkeyTogglePopup()
+    {
+        try
+        {
+            DebugLogger.Log("App", "Hotkey toggle popup");
+            _popupState?.OnTrayIconClick();
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("App", "HOTKEY TOGGLE ERROR", ex);
+        }
     }
 
     private void OnHoverEnter()
@@ -396,6 +418,7 @@ public class NotifyIconHelper : IDisposable
     private WndProcDelegate? _wndProc;
     private IntPtr _oldWndProc;
     private bool _isHovering;
+    private HotkeyService? _hotkeyService;
     
     private const int NIM_MODIFY = 0x01;
 
@@ -454,6 +477,14 @@ public class NotifyIconHelper : IDisposable
         // Create context menu
         _menuHandle = CreatePopupMenu();
         AppendMenu(_menuHandle, MF_STRING, IDM_EXIT, "Exit QuoteBar");
+    }
+
+    /// <summary>
+    /// Set the hotkey service for WndProc message processing.
+    /// </summary>
+    public void SetHotkeyService(HotkeyService hotkeyService)
+    {
+        _hotkeyService = hotkeyService;
     }
 
     public bool Create(string tooltip)
@@ -618,6 +649,12 @@ public class NotifyIconHelper : IDisposable
     {
         try
         {
+            // Process hotkey messages first
+            if (_hotkeyService?.ProcessMessage(msg, wParam, lParam) == true)
+            {
+                return IntPtr.Zero;
+            }
+
             if (msg == WM_TRAYICON)
             {
                 // For NOTIFYICON_VERSION_4:

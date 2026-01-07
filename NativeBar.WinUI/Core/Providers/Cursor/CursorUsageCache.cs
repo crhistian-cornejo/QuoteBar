@@ -27,7 +27,6 @@ public static class CursorUsageCache
     private static readonly TimeSpan DefaultCacheDuration = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan MaxCacheDuration = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan NearResetCacheDuration = TimeSpan.FromMinutes(1);
-    private static readonly int MaxConsecutiveFailures = 5;
 
     /// <summary>
     /// Get cached usage snapshot if valid, otherwise fetch new data.

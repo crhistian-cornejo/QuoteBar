@@ -190,7 +190,7 @@ public static class CursorSessionStore
     public static string? GetCookieHeader()
     {
         var cookie = GetSession()?.CookieHeader;
-        return cookie != null ? string.Copy(cookie) : null;
+        return cookie;
     }
 
     /// <summary>
@@ -420,13 +420,7 @@ public static class CursorSessionStore
 
     private static void Log(string message)
     {
-        // Write directly to D:\NativeBar\debug.log like other providers
-        try
-        {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] CursorSessionStore: {message}\n");
-        }
-        catch { }
+        Core.Services.DebugLogger.Log("CursorSessionStore", message);
     }
 
     #endregion

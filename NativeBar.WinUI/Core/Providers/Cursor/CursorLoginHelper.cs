@@ -109,11 +109,6 @@ public static class CursorLoginHelper
 
     private static void Log(string message)
     {
-        try
-        {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] CursorLoginHelper: {message}\n");
-        }
-        catch { }
+        Core.Services.DebugLogger.Log("CursorLoginHelper", message);
     }
 }

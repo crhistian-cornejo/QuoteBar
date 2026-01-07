@@ -11,6 +11,7 @@ public class GeminiProviderDescriptor : ProviderDescriptor
     public override string SecondaryColor => "#8AB4F8";
     public override string PrimaryLabel => "Pro Models";
     public override string SecondaryLabel => "Flash Models";
+public override string? DashboardUrl => "https://aistudio.google.com/app/plan";
 
     public override bool SupportsOAuth => true;
     public override bool SupportsCLI => true;
@@ -82,12 +83,7 @@ public class GeminiOAuthStrategy : IProviderFetchStrategy
 
     private static void Log(string message)
     {
-        try
-        {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] GeminiOAuthStrategy: {message}\n");
-        }
-        catch { }
+        Core.Services.DebugLogger.Log("GeminiOAuthStrategy", message);
     }
 }
 

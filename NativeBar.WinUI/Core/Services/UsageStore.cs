@@ -87,13 +87,16 @@ public partial class UsageStore : ObservableObject
         {
             var snapshot = await fetcher.FetchAsync();
             _snapshots[providerId] = snapshot;
-            
+
             // Check for usage alerts after successful fetch
             var provider = ProviderRegistry.Instance.GetProvider(providerId);
             if (provider != null)
             {
-                NotificationService.Instance.CheckAndNotifyUsage(providerId, provider.DisplayName, snapshot);
+                NotificationService.Instance.CheckAndNotifyUsage(providerId, snapshot);
             }
+
+            // Record history for charts
+            UsageHistoryService.Instance.RecordSnapshot(providerId, snapshot);
         }
         catch (Exception ex)
         {

@@ -326,11 +326,6 @@ public static class GeminiOAuthCredentialsStore
 
     private static void Log(string message)
     {
-        try
-        {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] GeminiOAuthCredentialsStore: {message}\n");
-        }
-        catch { }
+        Core.Services.DebugLogger.Log("GeminiOAuthCredentialsStore", message);
     }
 }

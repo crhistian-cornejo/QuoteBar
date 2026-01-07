@@ -1,6 +1,8 @@
 using Microsoft.Windows.AppNotifications;
 using Microsoft.Windows.AppNotifications.Builder;
 using NativeBar.WinUI.Core.Models;
+using NativeBar.WinUI.Core.Providers;
+using System.Diagnostics;
 
 namespace NativeBar.WinUI.Core.Services;
 
@@ -25,15 +27,20 @@ public class NotificationService
 
     /// <summary>
     /// Tracks which alerts have been sent per provider to avoid notification spam.
-    /// Key: "providerId:threshold", Value: DateTime when sent
-    /// Alerts reset when usage drops below threshold or after 24h
+    /// Key: "providerId:windowType:threshold", Value: DateTime when sent
     /// </summary>
     private readonly Dictionary<string, DateTime> _sentAlerts = new();
-    
+
     /// <summary>
-    /// Cooldown period before the same alert can be sent again (even if conditions still met)
+    /// Cooldown periods based on window type
     /// </summary>
-    private static readonly TimeSpan AlertCooldown = TimeSpan.FromHours(4);
+    private static readonly Dictionary<UsageWindowType, TimeSpan> CooldownByWindowType = new()
+    {
+        { UsageWindowType.Session, TimeSpan.FromMinutes(30) },  // Session: notify frequently
+        { UsageWindowType.Daily, TimeSpan.FromHours(12) },      // Daily: once per 12h
+        { UsageWindowType.Weekly, TimeSpan.FromDays(3) },       // Weekly: once per reset period
+        { UsageWindowType.Monthly, TimeSpan.FromDays(7) }       // Monthly: once per week
+    };
 
     public event Action<string, string>? NotificationActivated;
 
@@ -50,13 +57,11 @@ public class NotificationService
             manager.Register();
             _isRegistered = true;
 
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] NotificationService initialized\n");
+            DebugLogger.Log("NotificationService", "Initialized");
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] NotificationService.Initialize ERROR: {ex.Message}\n");
+            DebugLogger.LogError("NotificationService", "Initialize ERROR", ex);
         }
     }
 
@@ -77,22 +82,56 @@ public class NotificationService
     {
         try
         {
-            // Parse arguments from the notification
             var action = "";
-            var provider = "";
+            var providerId = "";
+            var dashboardUrl = "";
 
             foreach (var (key, value) in args.Arguments)
             {
                 if (key == "action") action = value;
-                if (key == "provider") provider = value;
+                if (key == "providerId") providerId = value;
+                if (key == "dashboardUrl") dashboardUrl = value;
             }
 
-            NotificationActivated?.Invoke(action, provider);
+            DebugLogger.Log("NotificationService", $"Notification activated: action={action}, providerId={providerId}");
+
+            if (action == "view" && !string.IsNullOrEmpty(dashboardUrl))
+            {
+                // Open dashboard URL in browser
+                OpenDashboard(dashboardUrl);
+            }
+            else if (action == "view" && !string.IsNullOrEmpty(providerId))
+            {
+                // Try to get dashboard URL from provider registry
+                var descriptor = ProviderRegistry.Instance.GetProvider(providerId);
+                if (descriptor?.DashboardUrl != null)
+                {
+                    OpenDashboard(descriptor.DashboardUrl);
+                }
+            }
+
+            NotificationActivated?.Invoke(action, providerId);
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] OnNotificationInvoked ERROR: {ex.Message}\n");
+            DebugLogger.LogError("NotificationService", "OnNotificationInvoked ERROR", ex);
+        }
+    }
+
+    private void OpenDashboard(string url)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = url,
+                UseShellExecute = true
+            });
+            DebugLogger.Log("NotificationService", $"Opened dashboard: {url}");
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("NotificationService", $"Failed to open dashboard: {url}", ex);
         }
     }
 
@@ -113,8 +152,7 @@ public class NotificationService
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] ShowToast ERROR: {ex.Message}\n");
+            DebugLogger.LogError("NotificationService", "ShowToast ERROR", ex);
         }
     }
 
@@ -122,7 +160,7 @@ public class NotificationService
     /// Main entry point: Check a provider's usage snapshot and send appropriate alerts.
     /// Call this after each refresh. Handles deduplication and cooldowns internally.
     /// </summary>
-    public void CheckAndNotifyUsage(string providerId, string providerDisplayName, UsageSnapshot? snapshot)
+    public void CheckAndNotifyUsage(string providerId, UsageSnapshot? snapshot)
     {
         if (snapshot == null || snapshot.IsLoading || !string.IsNullOrEmpty(snapshot.ErrorMessage))
             return;
@@ -130,65 +168,85 @@ public class NotificationService
         if (!SettingsService.Instance.Settings.UsageAlertsEnabled)
             return;
 
+        var descriptor = ProviderRegistry.Instance.GetProvider(providerId);
+        if (descriptor == null) return;
+
         var settings = SettingsService.Instance.Settings;
         var warningThreshold = settings.WarningThreshold;
         var criticalThreshold = settings.CriticalThreshold;
 
-        // Check primary rate window (most important)
-        CheckRateWindow(providerId, providerDisplayName, snapshot.Primary, warningThreshold, criticalThreshold);
-        
-        // Also check secondary if exists (some providers have multiple limits)
-        CheckRateWindow(providerId, providerDisplayName, snapshot.Secondary, warningThreshold, criticalThreshold, "secondary");
+        // Check primary rate window
+        CheckRateWindow(
+            descriptor,
+            snapshot.Primary,
+            descriptor.PrimaryWindowType,
+            warningThreshold,
+            criticalThreshold,
+            "primary");
+
+        // Check secondary if exists
+        CheckRateWindow(
+            descriptor,
+            snapshot.Secondary,
+            descriptor.SecondaryWindowType,
+            warningThreshold,
+            criticalThreshold,
+            "secondary");
     }
 
-    private void CheckRateWindow(string providerId, string providerDisplayName, RateWindow? window, 
-        int warningThreshold, int criticalThreshold, string windowSuffix = "")
+    private void CheckRateWindow(
+        IProviderDescriptor descriptor,
+        RateWindow? window,
+        UsageWindowType windowType,
+        int warningThreshold,
+        int criticalThreshold,
+        string windowSuffix)
     {
         if (window == null) return;
 
         var percentage = window.UsedPercent;
-        var alertKeyPrefix = string.IsNullOrEmpty(windowSuffix) ? providerId : $"{providerId}:{windowSuffix}";
+        var alertKeyPrefix = $"{descriptor.Id}:{windowSuffix}";
 
-        // Critical threshold (100% or configured)
+        // Critical threshold
         if (percentage >= criticalThreshold)
         {
-            if (ShouldSendAlert(alertKeyPrefix, AlertThreshold.Critical))
+            if (ShouldSendAlert(alertKeyPrefix, AlertThreshold.Critical, windowType))
             {
-                ShowUsageCriticalInternal(providerDisplayName, percentage, window.ResetsAt);
+                ShowUsageCriticalInternal(descriptor, percentage, window.ResetsAt, windowSuffix);
                 MarkAlertSent(alertKeyPrefix, AlertThreshold.Critical);
             }
         }
-        // Warning threshold (80% or configured)
+        // Warning threshold
         else if (percentage >= warningThreshold)
         {
-            if (ShouldSendAlert(alertKeyPrefix, AlertThreshold.Warning))
+            if (ShouldSendAlert(alertKeyPrefix, AlertThreshold.Warning, windowType))
             {
-                ShowUsageWarningInternal(providerDisplayName, percentage);
+                ShowUsageWarningInternal(descriptor, percentage, windowSuffix);
                 MarkAlertSent(alertKeyPrefix, AlertThreshold.Warning);
             }
-            // Reset critical alert if usage dropped below critical
             ClearAlert(alertKeyPrefix, AlertThreshold.Critical);
         }
         else
         {
-            // Usage is low - clear all alerts for this provider so they can fire again
+            // Usage dropped - clear alerts so they can fire again
             ClearAlert(alertKeyPrefix, AlertThreshold.Warning);
             ClearAlert(alertKeyPrefix, AlertThreshold.Critical);
         }
     }
 
-    private string GetAlertKey(string providerId, AlertThreshold threshold) 
+    private string GetAlertKey(string providerId, AlertThreshold threshold)
         => $"{providerId}:{threshold}";
 
-    private bool ShouldSendAlert(string providerId, AlertThreshold threshold)
+    private bool ShouldSendAlert(string providerId, AlertThreshold threshold, UsageWindowType windowType)
     {
         var key = GetAlertKey(providerId, threshold);
-        
-        if (!_sentAlerts.TryGetValue(key, out var lastSent))
-            return true; // Never sent before
 
-        // Allow resending after cooldown period
-        return DateTime.UtcNow - lastSent > AlertCooldown;
+        if (!_sentAlerts.TryGetValue(key, out var lastSent))
+            return true;
+
+        // Get cooldown based on window type
+        var cooldown = CooldownByWindowType.GetValueOrDefault(windowType, TimeSpan.FromHours(4));
+        return DateTime.UtcNow - lastSent > cooldown;
     }
 
     private void MarkAlertSent(string providerId, AlertThreshold threshold)
@@ -204,68 +262,79 @@ public class NotificationService
     }
 
     /// <summary>
-    /// Clear all sent alerts (useful when user changes threshold settings)
+    /// Clear all sent alerts
     /// </summary>
     public void ClearAllAlerts()
     {
         _sentAlerts.Clear();
     }
 
-    private void ShowUsageWarningInternal(string providerName, double percentage)
+    private void ShowUsageWarningInternal(IProviderDescriptor descriptor, double percentage, string windowSuffix)
     {
         try
         {
             if (!_isRegistered) return;
 
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] Sending WARNING alert for {providerName} at {percentage:F0}%\n");
+            var windowLabel = windowSuffix == "secondary" ? descriptor.SecondaryLabel : descriptor.PrimaryLabel;
+            DebugLogger.Log("NotificationService", $"Sending WARNING for {descriptor.DisplayName} ({windowLabel}) at {percentage:F0}%");
 
             var builder = new AppNotificationBuilder()
-                .AddText($"⚠️ {providerName} Usage Warning")
-                .AddText($"You've used {percentage:F0}% of your quota")
-                .AddArgument("provider", providerName)
-                .AddButton(new AppNotificationButton("View Details")
+                .AddText($"⚠️ {descriptor.DisplayName} Usage Warning")
+                .AddText($"{windowLabel}: {percentage:F0}% used")
+                .AddArgument("providerId", descriptor.Id);
+
+            // Add View Details button with dashboard URL
+            if (!string.IsNullOrEmpty(descriptor.DashboardUrl))
+            {
+                builder.AddButton(new AppNotificationButton("View Details")
                     .AddArgument("action", "view")
-                    .AddArgument("provider", providerName))
-                .AddButton(new AppNotificationButton("Dismiss")
-                    .AddArgument("action", "dismiss"));
+                    .AddArgument("providerId", descriptor.Id)
+                    .AddArgument("dashboardUrl", descriptor.DashboardUrl));
+            }
+
+            builder.AddButton(new AppNotificationButton("Dismiss")
+                .AddArgument("action", "dismiss"));
 
             AppNotificationManager.Default.Show(builder.BuildNotification());
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] ShowUsageWarning ERROR: {ex.Message}\n");
+            DebugLogger.LogError("NotificationService", "ShowUsageWarning ERROR", ex);
         }
     }
 
-    private void ShowUsageCriticalInternal(string providerName, double percentage, DateTime? resetsAt)
+    private void ShowUsageCriticalInternal(IProviderDescriptor descriptor, double percentage, DateTime? resetsAt, string windowSuffix)
     {
         try
         {
             if (!_isRegistered) return;
 
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] Sending CRITICAL alert for {providerName} at {percentage:F0}%\n");
+            var windowLabel = windowSuffix == "secondary" ? descriptor.SecondaryLabel : descriptor.PrimaryLabel;
+            DebugLogger.Log("NotificationService", $"Sending CRITICAL for {descriptor.DisplayName} ({windowLabel}) at {percentage:F0}%");
 
-            var resetText = resetsAt.HasValue 
-                ? $"Resets: {FormatResetTime(resetsAt.Value)}" 
-                : "Consider reducing usage.";
+            var resetText = resetsAt.HasValue
+                ? $"Resets {FormatResetTime(resetsAt.Value)}"
+                : "";
 
             var builder = new AppNotificationBuilder()
-                .AddText($"🚨 {providerName} Limit Reached!")
-                .AddText($"You've used {percentage:F0}% of your quota. {resetText}")
-                .AddArgument("provider", providerName)
-                .AddButton(new AppNotificationButton("View Details")
+                .AddText($"🚨 {descriptor.DisplayName} Limit Reached!")
+                .AddText($"{windowLabel}: {percentage:F0}% used. {resetText}".Trim())
+                .AddArgument("providerId", descriptor.Id);
+
+            // Add View Details button with dashboard URL
+            if (!string.IsNullOrEmpty(descriptor.DashboardUrl))
+            {
+                builder.AddButton(new AppNotificationButton("View Details")
                     .AddArgument("action", "view")
-                    .AddArgument("provider", providerName));
+                    .AddArgument("providerId", descriptor.Id)
+                    .AddArgument("dashboardUrl", descriptor.DashboardUrl));
+            }
 
             AppNotificationManager.Default.Show(builder.BuildNotification());
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] ShowUsageCritical ERROR: {ex.Message}\n");
+            DebugLogger.LogError("NotificationService", "ShowUsageCritical ERROR", ex);
         }
     }
 
@@ -275,27 +344,37 @@ public class NotificationService
         var diff = resetUtc - DateTime.UtcNow;
 
         if (diff.TotalMinutes < 60)
-            return $"in {diff.TotalMinutes:F0} min";
+            return $"in {diff.TotalMinutes:F0}m";
         if (diff.TotalHours < 24)
-            return $"in {diff.TotalHours:F1} hours";
-        
+            return $"in {diff.TotalHours:F1}h";
+
         return local.ToString("MMM d, h:mm tt");
     }
 
     /// <summary>
-    /// Show usage warning notification (legacy - prefer CheckAndNotifyUsage)
+    /// Show usage warning notification (legacy)
     /// </summary>
     public void ShowUsageWarning(string providerName, double percentage)
     {
-        ShowUsageWarningInternal(providerName, percentage);
+        var descriptor = ProviderRegistry.Instance.GetAllProviders()
+            .FirstOrDefault(p => p.DisplayName == providerName);
+        if (descriptor != null)
+        {
+            ShowUsageWarningInternal(descriptor, percentage, "primary");
+        }
     }
 
     /// <summary>
-    /// Show critical usage notification (legacy - prefer CheckAndNotifyUsage)
+    /// Show critical usage notification (legacy)
     /// </summary>
     public void ShowUsageCritical(string providerName, double percentage)
     {
-        ShowUsageCriticalInternal(providerName, percentage, null);
+        var descriptor = ProviderRegistry.Instance.GetAllProviders()
+            .FirstOrDefault(p => p.DisplayName == providerName);
+        if (descriptor != null)
+        {
+            ShowUsageCriticalInternal(descriptor, percentage, null, "primary");
+        }
     }
 
     /// <summary>
@@ -318,8 +397,7 @@ public class NotificationService
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] ShowProviderStatus ERROR: {ex.Message}\n");
+            DebugLogger.LogError("NotificationService", "ShowProviderStatus ERROR", ex);
         }
     }
 
@@ -345,8 +423,7 @@ public class NotificationService
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] ShowDailySummary ERROR: {ex.Message}\n");
+            DebugLogger.LogError("NotificationService", "ShowDailySummary ERROR", ex);
         }
     }
 }

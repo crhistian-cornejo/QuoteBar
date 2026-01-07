@@ -1,4 +1,5 @@
 using NativeBar.WinUI.Core.Models;
+using NativeBar.WinUI.Core.Services;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -15,6 +16,7 @@ public class CopilotProviderDescriptor : ProviderDescriptor
     public override string PrimaryLabel => "Premium Requests";
     public override string SecondaryLabel => "Top Model";
     public override string? TertiaryLabel => "2nd Model";
+public override string? DashboardUrl => "https://github.com/settings/copilot";
 
     public override bool SupportsOAuth => true;
     public override bool SupportsCLI => true;
@@ -126,12 +128,7 @@ public class CopilotOAuthStrategy : IProviderFetchStrategy
 
     private void Log(string message)
     {
-        try
-        {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] CopilotOAuthStrategy: {message}\n");
-        }
-        catch { }
+        DebugLogger.Log("CopilotOAuthStrategy", message);
     }
 }
 
@@ -344,11 +341,6 @@ public class CopilotCLIStrategy : IProviderFetchStrategy
 
     private void Log(string message)
     {
-        try
-        {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] CopilotCLIStrategy: {message}\n");
-        }
-        catch { }
+        DebugLogger.Log("CopilotCLIStrategy", message);
     }
 }

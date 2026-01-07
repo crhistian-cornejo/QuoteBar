@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.Runtime.InteropServices;
+using NativeBar.WinUI.Core.Services;
 
 namespace NativeBar.WinUI.Helpers;
 
@@ -38,8 +39,7 @@ public class TaskbarOverlayHelper : IDisposable
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] TaskbarOverlayHelper init error: {ex.Message}\n");
+            DebugLogger.LogError("TaskbarOverlayHelper", "Init error", ex);
         }
     }
 
@@ -84,8 +84,7 @@ public class TaskbarOverlayHelper : IDisposable
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] SetUsageOverlay error: {ex.Message}\n");
+            DebugLogger.LogError("TaskbarOverlayHelper", "SetUsageOverlay error", ex);
         }
     }
 
@@ -120,8 +119,7 @@ public class TaskbarOverlayHelper : IDisposable
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] SetStatusOverlay error: {ex.Message}\n");
+            DebugLogger.LogError("TaskbarOverlayHelper", "SetStatusOverlay error", ex);
         }
     }
 
@@ -142,8 +140,7 @@ public class TaskbarOverlayHelper : IDisposable
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] ClearOverlay error: {ex.Message}\n");
+            DebugLogger.LogError("TaskbarOverlayHelper", "ClearOverlay error", ex);
         }
     }
 

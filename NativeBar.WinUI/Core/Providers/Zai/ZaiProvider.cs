@@ -15,6 +15,7 @@ public class ZaiProviderDescriptor : ProviderDescriptor
     public override string SecondaryColor => "#D44A5A";
     public override string PrimaryLabel => "Tokens";
     public override string SecondaryLabel => "MCP";
+public override string? DashboardUrl => "https://z.ai/account";
 
     public override bool SupportsOAuth => false;
     public override bool SupportsCLI => false;
@@ -73,12 +74,7 @@ public class ZaiAPIStrategy : IProviderFetchStrategy
 
     private void Log(string message)
     {
-        try
-        {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] ZaiAPIStrategy: {message}\n");
-        }
-        catch { }
+        Core.Services.DebugLogger.Log("ZaiAPIStrategy", message);
     }
 }
 
@@ -323,12 +319,7 @@ public static class ZaiUsageFetcher
 
     private static void Log(string message)
     {
-        try
-        {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] ZaiUsageFetcher: {message}\n");
-        }
-        catch { }
+        Core.Services.DebugLogger.Log("ZaiUsageFetcher", message);
     }
 }
 

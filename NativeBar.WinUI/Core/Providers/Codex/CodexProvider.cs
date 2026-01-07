@@ -1,4 +1,5 @@
 using NativeBar.WinUI.Core.Models;
+using NativeBar.WinUI.Core.Services;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
@@ -16,6 +17,7 @@ public class CodexProviderDescriptor : ProviderDescriptor
     public override string PrimaryLabel => "Session";
     public override string SecondaryLabel => "Weekly";
     public override string? TertiaryLabel => "Sonnet";
+public override string? DashboardUrl => "https://chatgpt.com/codex/settings/usage";
 
     public override bool SupportsOAuth => true;
     public override bool SupportsCLI => true;
@@ -89,8 +91,7 @@ public class CodexCLIStrategy : IProviderFetchStrategy
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] CodexCLIStrategy ERROR: {ex.Message}\n{ex.StackTrace}\n");
+            DebugLogger.LogError("CodexCLIStrategy", $"ERROR: {ex.Message}", ex);
 
             return new UsageSnapshot
             {
@@ -124,8 +125,7 @@ public class CodexCLIStrategy : IProviderFetchStrategy
 
             await process.WaitForExitAsync(cancellationToken);
 
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] codex {command} output:\n{output}\nstderr: {error}\n");
+            DebugLogger.Log("CodexCLIStrategy", $"codex {command} output:\n{output}\nstderr: {error}");
 
             return output;
         }

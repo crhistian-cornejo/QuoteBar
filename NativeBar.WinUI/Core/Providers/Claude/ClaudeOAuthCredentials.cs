@@ -1,7 +1,4 @@
 using System.IO;
-using System.Runtime.InteropServices;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -93,7 +90,16 @@ public class ClaudeOAuthCredentialsException : Exception
 }
 
 /// <summary>
-/// Manages loading Claude OAuth credentials from Windows Credential Manager or file
+/// Manages loading Claude OAuth credentials from the Claude CLI credentials file.
+/// 
+/// SECURITY NOTE: This class intentionally does NOT use:
+/// - Windows Credential Manager P/Invoke (advapi32.dll CredRead)
+/// - Any third-party application's stored credentials
+/// 
+/// It only reads the Claude CLI's own credentials file (~/.claude/.credentials.json)
+/// which the user explicitly created via 'claude login' command.
+/// 
+/// This avoids antivirus/EDR detections for credential theft (MITRE T1555.003/T1555.004)
 /// </summary>
 public static class ClaudeOAuthCredentialsStore
 {
@@ -101,16 +107,14 @@ public static class ClaudeOAuthCredentialsStore
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
         ".claude", ".credentials.json");
 
-    private const string CredentialManagerTarget = "Claude Code-credentials";
-
-    // Cache to avoid repeated credential manager access
+    // Cache to avoid repeated file access
     private static ClaudeOAuthCredentials? _cachedCredentials;
     private static DateTime? _cacheTimestamp;
     private static readonly TimeSpan CacheValidityDuration = TimeSpan.FromMinutes(1);
     private static readonly object _cacheLock = new();
 
     /// <summary>
-    /// Load credentials, preferring Windows Credential Manager, falling back to file
+    /// Load credentials from Claude CLI credentials file
     /// </summary>
     public static ClaudeOAuthCredentials Load()
     {
@@ -125,27 +129,7 @@ public static class ClaudeOAuthCredentialsStore
             }
         }
 
-        Exception? lastError = null;
-
-        // Try Windows Credential Manager first
-        try
-        {
-            var credManagerData = LoadFromCredentialManager();
-            if (!string.IsNullOrEmpty(credManagerData))
-            {
-                var creds = ClaudeOAuthCredentials.Parse(credManagerData);
-                UpdateCache(creds);
-                return creds;
-            }
-        }
-        catch (Exception ex)
-        {
-            lastError = ex;
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] ClaudeOAuthCredentialsStore: Credential Manager failed: {ex.Message}\n");
-        }
-
-        // Fall back to file
+        // Load from file
         try
         {
             var fileData = LoadFromFile();
@@ -153,11 +137,14 @@ public static class ClaudeOAuthCredentialsStore
             UpdateCache(creds);
             return creds;
         }
-        catch (Exception ex)
+        catch (FileNotFoundException)
         {
-            if (lastError != null)
-                throw new ClaudeOAuthCredentialsException($"Failed to load credentials: {lastError.Message}", lastError);
-            throw new ClaudeOAuthCredentialsException($"Failed to load credentials from file: {ex.Message}", ex);
+            throw new ClaudeOAuthCredentialsException(
+                $"Claude credentials not found. Please run 'claude login' in your terminal to authenticate.");
+        }
+        catch (Exception ex) when (ex is not ClaudeOAuthCredentialsException)
+        {
+            throw new ClaudeOAuthCredentialsException($"Failed to load credentials: {ex.Message}", ex);
         }
     }
 
@@ -200,101 +187,8 @@ public static class ClaudeOAuthCredentialsStore
     private static string LoadFromFile()
     {
         if (!File.Exists(CredentialsPath))
-            throw new ClaudeOAuthCredentialsException($"Credentials file not found: {CredentialsPath}");
+            throw new FileNotFoundException($"Credentials file not found", CredentialsPath);
 
         return File.ReadAllText(CredentialsPath);
-    }
-
-    private static string? LoadFromCredentialManager()
-    {
-        try
-        {
-            var credential = CredentialManager.ReadCredential(CredentialManagerTarget);
-            return credential;
-        }
-        catch (Exception ex)
-        {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] CredentialManager.ReadCredential failed: {ex.Message}\n");
-            return null;
-        }
-    }
-}
-
-/// <summary>
-/// Windows Credential Manager P/Invoke wrapper
-/// </summary>
-internal static class CredentialManager
-{
-    public static string? ReadCredential(string targetName)
-    {
-        IntPtr credPtr = IntPtr.Zero;
-        try
-        {
-            bool success = CredRead(targetName, CRED_TYPE_GENERIC, 0, out credPtr);
-            if (!success)
-            {
-                int error = Marshal.GetLastWin32Error();
-                if (error == ERROR_NOT_FOUND)
-                    return null;
-                throw new ClaudeOAuthCredentialsException($"CredRead failed with error {error}");
-            }
-
-            var cred = Marshal.PtrToStructure<CREDENTIAL>(credPtr);
-            if (cred.CredentialBlobSize == 0 || cred.CredentialBlob == IntPtr.Zero)
-                return null;
-
-            byte[] passwordBytes = new byte[cred.CredentialBlobSize];
-            Marshal.Copy(cred.CredentialBlob, passwordBytes, 0, (int)cred.CredentialBlobSize);
-
-            // Try UTF-16 first (Windows default), then UTF-8
-            string password;
-            try
-            {
-                password = Encoding.Unicode.GetString(passwordBytes);
-                // Check if it looks like valid JSON
-                if (!password.TrimStart().StartsWith("{"))
-                {
-                    password = Encoding.UTF8.GetString(passwordBytes);
-                }
-            }
-            catch
-            {
-                password = Encoding.UTF8.GetString(passwordBytes);
-            }
-
-            return password;
-        }
-        finally
-        {
-            if (credPtr != IntPtr.Zero)
-                CredFree(credPtr);
-        }
-    }
-
-    private const int CRED_TYPE_GENERIC = 1;
-    private const int ERROR_NOT_FOUND = 1168;
-
-    [DllImport("advapi32.dll", EntryPoint = "CredReadW", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern bool CredRead(string target, int type, int reservedFlag, out IntPtr credential);
-
-    [DllImport("advapi32.dll", SetLastError = true)]
-    private static extern bool CredFree(IntPtr credential);
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    private struct CREDENTIAL
-    {
-        public uint Flags;
-        public uint Type;
-        public IntPtr TargetName;
-        public IntPtr Comment;
-        public System.Runtime.InteropServices.ComTypes.FILETIME LastWritten;
-        public uint CredentialBlobSize;
-        public IntPtr CredentialBlob;
-        public uint Persist;
-        public uint AttributeCount;
-        public IntPtr Attributes;
-        public IntPtr TargetAlias;
-        public IntPtr UserName;
     }
 }

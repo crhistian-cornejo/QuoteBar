@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using NativeBar.WinUI.Core.Models;
+using NativeBar.WinUI.Core.Services;
 
 namespace NativeBar.WinUI.Core.Providers.Copilot;
 
@@ -375,43 +376,107 @@ public static class CopilotUsageFetcher
 
     private static void DetectPlanTypeAndLimits(CopilotUsageData usageData)
     {
-        // Detect plan based on usage patterns and limits
-        // If user has >300 included requests without being billed, they're on Pro+ (1500)
-        // If user has >50 included requests without being billed, they're on Pro (300)
-        // Otherwise they're on Free (50)
-
+        // First, check if user has manually configured their plan
+        var settings = NativeBar.WinUI.Core.Services.SettingsService.Instance.Settings;
+        var configuredPlan = settings.CopilotPlanType?.ToLowerInvariant() ?? "auto";
+        
+        if (configuredPlan != "auto")
+        {
+            // User has explicitly set their plan type
+            switch (configuredPlan)
+            {
+                case "pro_plus":
+                    usageData.DetectedPlanType = "Copilot Pro+";
+                    usageData.IncludedRequestsLimit = 1500;
+                    Log($"Using configured plan: Pro+ (1500 limit)");
+                    return;
+                case "pro":
+                    usageData.DetectedPlanType = "Copilot Pro";
+                    usageData.IncludedRequestsLimit = 300;
+                    Log($"Using configured plan: Pro (300 limit)");
+                    return;
+                case "free":
+                    usageData.DetectedPlanType = "Copilot Free";
+                    usageData.IncludedRequestsLimit = 50;
+                    Log($"Using configured plan: Free (50 limit)");
+                    return;
+            }
+        }
+        
+        // Auto-detection based on usage patterns
         double used = usageData.TotalPremiumRequestsUsed;
         double billed = usageData.TotalBilledAmount;
-
-        // Check if any items have netAmount > 0 (meaning they went over included limit)
         bool hasBilledRequests = billed > 0;
-
-        // Determine plan based on usage
-        if (used > 300 && !hasBilledRequests)
+        
+        // Check for Pro+ indicators in usage items
+        bool hasProPlusIndicators = false;
+        if (usageData.PremiumRequestUsage?.UsageItems != null)
         {
-            // Used more than 300 without being billed = Pro+ (1500 limit)
+            var copilotItems = usageData.PremiumRequestUsage.UsageItems
+                .Where(i => i.Product?.Equals("Copilot", StringComparison.OrdinalIgnoreCase) == true)
+                .ToList();
+
+            // Pro+ indicators:
+            // 1. Use of premium models (Claude Opus, o1, o3, GPT-5)
+            // 2. Higher price per unit items (Pro+ has access to more expensive models)
+            // 3. Usage of multiple premium model types
+            hasProPlusIndicators = copilotItems.Any(i => 
+                i.Model?.Contains("Opus", StringComparison.OrdinalIgnoreCase) == true ||
+                i.Model?.Contains("GPT-5", StringComparison.OrdinalIgnoreCase) == true ||
+                i.Model?.Contains("o1", StringComparison.OrdinalIgnoreCase) == true ||
+                i.Model?.Contains("o3", StringComparison.OrdinalIgnoreCase) == true ||
+                i.Model?.Contains("Gemini 2.5", StringComparison.OrdinalIgnoreCase) == true ||
+                (i.PricePerUnit ?? 0) > 0.01); // Premium models have higher price per request
+                
+            // Also check if there are many different model types (Pro+ users tend to use variety)
+            var distinctModels = copilotItems
+                .Where(i => !string.IsNullOrEmpty(i.Model))
+                .Select(i => i.Model)
+                .Distinct()
+                .Count();
+            
+            if (distinctModels >= 3)
+            {
+                hasProPlusIndicators = true;
+            }
+            
+            Log($"Pro+ detection: hasIndicators={hasProPlusIndicators}, distinctModels={distinctModels}, hasBilled={hasBilledRequests}");
+        }
+        
+        // Determine plan based on indicators
+        if (hasProPlusIndicators)
+        {
+            usageData.DetectedPlanType = "Copilot Pro+";
+            usageData.IncludedRequestsLimit = 1500;
+        }
+        else if (used > 300 && !hasBilledRequests)
+        {
+            // Used more than 300 without being billed = definitely Pro+
             usageData.DetectedPlanType = "Copilot Pro+";
             usageData.IncludedRequestsLimit = 1500;
         }
         else if (used > 50 && !hasBilledRequests)
         {
-            // Used more than 50 without being billed = Pro (300 limit)
+            // Used more than 50 without being billed = at least Pro
+            // But if we don't have Pro+ indicators, assume Pro
             usageData.DetectedPlanType = "Copilot Pro";
             usageData.IncludedRequestsLimit = 300;
         }
         else if (used <= 50)
         {
-            // Could be any plan, but if usage is low, assume based on GitHub plan
+            // Low usage - check GitHub plan for hints
             var githubPlan = usageData.User?.Plan?.Name?.ToLowerInvariant();
             
             if (githubPlan == "pro" || githubPlan == "team")
             {
+                // GitHub Pro users likely have Copilot Pro
                 usageData.DetectedPlanType = "Copilot Pro";
                 usageData.IncludedRequestsLimit = 300;
             }
             else
             {
-                // Default to Pro if we can't determine (most likely scenario for active users)
+                // Default to Pro for paying users (most common scenario)
+                // Users can override in settings if they have Pro+
                 usageData.DetectedPlanType = "Copilot Pro";
                 usageData.IncludedRequestsLimit = 300;
             }
@@ -419,13 +484,7 @@ public static class CopilotUsageFetcher
         else
         {
             // User is being billed for excess usage
-            // Try to determine original plan
-            if (hasBilledRequests && used > 1500)
-            {
-                usageData.DetectedPlanType = "Copilot Pro+";
-                usageData.IncludedRequestsLimit = 1500;
-            }
-            else if (hasBilledRequests && used > 300)
+            if (hasBilledRequests && used > 300)
             {
                 usageData.DetectedPlanType = "Copilot Pro+";
                 usageData.IncludedRequestsLimit = 1500;
@@ -436,26 +495,8 @@ public static class CopilotUsageFetcher
                 usageData.IncludedRequestsLimit = 300;
             }
         }
-
-        // Check from usage items if there's copilot-specific info
-        if (usageData.PremiumRequestUsage?.UsageItems != null)
-        {
-            var copilotItems = usageData.PremiumRequestUsage.UsageItems
-                .Where(i => i.Product?.Equals("Copilot", StringComparison.OrdinalIgnoreCase) == true)
-                .ToList();
-
-            // If we have items with models like Claude Opus, GPT-5, etc., it's likely Pro+
-            var hasAdvancedModels = copilotItems.Any(i => 
-                i.Model?.Contains("Opus", StringComparison.OrdinalIgnoreCase) == true ||
-                i.Model?.Contains("GPT-5", StringComparison.OrdinalIgnoreCase) == true ||
-                i.Model?.Contains("o1", StringComparison.OrdinalIgnoreCase) == true);
-
-            if (hasAdvancedModels && usageData.IncludedRequestsLimit < 1500)
-            {
-                usageData.DetectedPlanType = "Copilot Pro+";
-                usageData.IncludedRequestsLimit = 1500;
-            }
-        }
+        
+        Log($"Auto-detected plan: {usageData.DetectedPlanType} (limit={usageData.IncludedRequestsLimit})");
     }
 
     private static DateTime CalculateNextResetDate()
@@ -647,12 +688,7 @@ public static class CopilotUsageFetcher
 
     private static void Log(string message)
     {
-        try
-        {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] CopilotUsageFetcher: {message}\n");
-        }
-        catch { }
+        DebugLogger.Log("CopilotUsageFetcher", message);
     }
 }
 

@@ -53,12 +53,14 @@ public sealed class SettingsWindow : Window
     private Slider? _hoverSlider;
     private ToggleSwitch? _trayBadgeToggle;
     private StackPanel? _trayBadgeProvidersPanel;
+    private ToggleSwitch? _hotkeyToggle;
+    private ComboBox? _hotkeyCombo;
 
     public SettingsWindow(string? initialPage = null)
     {
         try
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log", $"[{DateTime.Now}] SettingsWindow constructor start\n");
+            DebugLogger.Log("SettingsWindow", "Constructor start");
 
             _initialPage = initialPage;
             Title = "QuoteBar Settings";
@@ -84,11 +86,11 @@ public sealed class SettingsWindow : Window
             // Listen for theme changes
             _theme.ThemeChanged += OnThemeChanged;
 
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log", $"[{DateTime.Now}] SettingsWindow constructor complete\n");
+            DebugLogger.Log("SettingsWindow", "Constructor complete");
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log", $"[{DateTime.Now}] SettingsWindow ERROR: {ex.Message}\n{ex.StackTrace}\n");
+            DebugLogger.LogError("SettingsWindow", "Constructor error", ex);
             throw;
         }
     }
@@ -504,6 +506,70 @@ public sealed class SettingsWindow : Window
             "Delay before showing popup on hover",
             hoverPanel));
 
+        // Keyboard shortcuts section
+        stack.Children.Add(CreateHeader("Keyboard Shortcuts", topMargin: 24));
+
+        // Global hotkey enable/disable
+        _hotkeyToggle = CreateToggleSwitch(_settings.Settings.HotkeyEnabled);
+        _hotkeyToggle.Toggled += (s, e) =>
+        {
+            _settings.Settings.HotkeyEnabled = _hotkeyToggle.IsOn;
+            _settings.Save();
+            // TODO: Notify HotkeyService to enable/disable
+        };
+        stack.Children.Add(CreateSettingCard(
+            "Enable global hotkey",
+            "Use a keyboard shortcut to toggle the popup from anywhere",
+            _hotkeyToggle));
+
+        // Hotkey selection
+        _hotkeyCombo = new ComboBox { Width = 180 };
+        _hotkeyCombo.Items.Add("Win + Shift + Q");
+        _hotkeyCombo.Items.Add("Win + Alt + Q");
+        _hotkeyCombo.Items.Add("Ctrl + Alt + Q");
+        _hotkeyCombo.Items.Add("Win + Shift + U");
+        _hotkeyCombo.Items.Add("Win + `");
+        
+        // Set current selection based on settings
+        var currentHotkey = _settings.Settings.HotkeyDisplayString ?? "Win + Shift + Q";
+        _hotkeyCombo.SelectedIndex = currentHotkey switch
+        {
+            "Win + Shift + Q" => 0,
+            "Win + Alt + Q" => 1,
+            "Ctrl + Alt + Q" => 2,
+            "Win + Shift + U" => 3,
+            "Win + `" => 4,
+            _ => 0
+        };
+        
+        _hotkeyCombo.SelectionChanged += (s, e) =>
+        {
+            var selected = _hotkeyCombo.SelectedItem?.ToString() ?? "Win + Shift + Q";
+            _settings.Settings.HotkeyDisplayString = selected;
+            
+            // Parse and save individual components
+            var (modifiers, key) = ParseHotkeyString(selected);
+            _settings.Settings.HotkeyModifiers = modifiers;
+            _settings.Settings.HotkeyKey = key;
+            _settings.Save();
+            // TODO: Notify HotkeyService to re-register with new binding
+        };
+        
+        stack.Children.Add(CreateSettingCard(
+            "Global hotkey",
+            "Keyboard shortcut to toggle the popup",
+            _hotkeyCombo));
+
+        // Shortcuts reference
+        var shortcutsInfo = new TextBlock
+        {
+            Text = "Popup shortcuts: 1-9 (switch provider), R (refresh), D (dashboard), S (settings), P (pin), ? (help)",
+            FontSize = 12,
+            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
+            TextWrapping = TextWrapping.Wrap
+        };
+        stack.Children.Add(shortcutsInfo);
+
         scroll.Content = stack;
         return scroll;
     }
@@ -905,13 +971,11 @@ public sealed class SettingsWindow : Window
                     break;
             }
             
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] DisconnectProvider: Disconnected {providerId}\n");
+            DebugLogger.Log("SettingsWindow", $"DisconnectProvider: Disconnected {providerId}");
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] DisconnectProvider ERROR ({providerId}): {ex.Message}\n");
+            DebugLogger.LogError("SettingsWindow", $"DisconnectProvider error ({providerId})", ex);
         }
     }
 
@@ -1020,8 +1084,6 @@ public sealed class SettingsWindow : Window
                 case "cursor":
                     if (CursorSessionStore.HasSession())
                         return (true, "Session stored");
-                    if (CursorCookieImporter.HasSession())
-                        return (true, "Browser session found");
                     break;
                     
                 case "gemini":
@@ -1054,8 +1116,7 @@ public sealed class SettingsWindow : Window
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] GetProviderStatus({providerId}) ERROR: {ex.Message}\n");
+            DebugLogger.LogError("SettingsWindow", $"GetProviderStatus({providerId}) error", ex);
             return (false, "Not configured");
         }
     }
@@ -1712,14 +1773,14 @@ public sealed class SettingsWindow : Window
         return button;
     }
 
-    private TextBlock CreateHeader(string text)
+    private TextBlock CreateHeader(string text, double topMargin = 0)
     {
         return new TextBlock
         {
             Text = text,
             FontSize = 28,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Margin = new Thickness(0, 0, 0, 8)
+            Margin = new Thickness(0, topMargin, 0, 8)
         };
     }
 
@@ -1964,6 +2025,31 @@ public sealed class SettingsWindow : Window
         byte g = Convert.ToByte(hex.Substring(2, 2), 16);
         byte b = Convert.ToByte(hex.Substring(4, 2), 16);
         return Windows.UI.Color.FromArgb(255, r, g, b);
+    }
+
+    private (List<string> Modifiers, string Key) ParseHotkeyString(string hotkeyString)
+    {
+        // Parse "Win + Shift + Q" into modifiers list and key
+        var parts = hotkeyString.Split('+', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        var modifiers = new List<string>();
+        var key = "Q";
+
+        foreach (var part in parts)
+        {
+            if (part.Equals("Win", StringComparison.OrdinalIgnoreCase) ||
+                part.Equals("Shift", StringComparison.OrdinalIgnoreCase) ||
+                part.Equals("Alt", StringComparison.OrdinalIgnoreCase) ||
+                part.Equals("Ctrl", StringComparison.OrdinalIgnoreCase))
+            {
+                modifiers.Add(part);
+            }
+            else
+            {
+                key = part;
+            }
+        }
+
+        return (modifiers, key);
     }
 
     private TextBlock CreateProviderInitial(string name)

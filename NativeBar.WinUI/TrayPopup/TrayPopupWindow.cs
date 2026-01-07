@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using NativeBar.WinUI.Controls;
 using NativeBar.WinUI.Core.Models;
 using NativeBar.WinUI.Core.Providers;
 using NativeBar.WinUI.Core.Services;
@@ -14,6 +15,7 @@ using NativeBar.WinUI.ViewModels;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Windows.Graphics;
+using Windows.System;
 using Windows.UI.ViewManagement;
 using WinRT.Interop;
 
@@ -51,6 +53,9 @@ public sealed class TrayPopupWindow : Window
     // Usage sections
     private StackPanel _usageSectionsPanel = null!;
     private TextBlock _lastUpdatedText = null!;
+
+    // Usage history chart - disabled
+    // private UsageHistoryChart? _usageChart;
 
     // Footer links
     private StackPanel _footerLinksPanel = null!;
@@ -218,6 +223,7 @@ public sealed class TrayPopupWindow : Window
         };
         _rootGrid.PointerEntered += OnPointerEntered;
         _rootGrid.PointerExited += OnPointerExited;
+        _rootGrid.KeyDown += OnKeyDown;
 
         // Main border - NO visible border, just subtle shadow via Mica
         _popupBorder = new Border
@@ -257,6 +263,19 @@ public sealed class TrayPopupWindow : Window
         // Usage sections (dynamic)
         _usageSectionsPanel = new StackPanel { Spacing = 16 };
         contentPanel.Children.Add(_usageSectionsPanel);
+
+        // Usage history chart - TODO: fix crash
+        // if (!IsCompactMode)
+        // {
+        //     try
+        //     {
+        //         BuildChartSection(contentPanel);
+        //     }
+        //     catch (Exception ex)
+        //     {
+        //         DebugLogger.LogError("TrayPopup", "Chart build failed", ex);
+        //     }
+        // }
 
         // Separator before footer
         contentPanel.Children.Add(new Border
@@ -842,6 +861,32 @@ public sealed class TrayPopupWindow : Window
         catch { }
     }
 
+    // Chart section disabled - uncomment when UsageHistoryChart is ready
+    // private void BuildChartSection(StackPanel parent)
+    // {
+    //     var section = new StackPanel { Spacing = 8, Margin = new Thickness(0, 8, 0, 0) };
+    //     var headerRow = new Grid();
+    //     var headerText = new TextBlock
+    //     {
+    //         Text = "Usage History (14 days)",
+    //         FontSize = 12,
+    //         FontWeight = Microsoft.UI.Text.FontWeights.Medium,
+    //         Foreground = new SolidColorBrush(SecondaryTextColor)
+    //     };
+    //     headerRow.Children.Add(headerText);
+    //     section.Children.Add(headerRow);
+    //     _usageChart = new UsageHistoryChart
+    //     {
+    //         Height = 100,
+    //         IsDarkMode = _isDarkMode,
+    //         ProviderId = _selectedProviderId,
+    //         ProviderColor = GetProviderColorById(_selectedProviderId),
+    //         Days = 14
+    //     };
+    //     section.Children.Add(_usageChart);
+    //     parent.Children.Add(section);
+    // }
+
     private void BuildFooter(StackPanel parent)
     {
         // Last updated row
@@ -878,6 +923,40 @@ public sealed class TrayPopupWindow : Window
         AddFooterLink("\uE946", "About QuoteBar", settingsRow, OnAboutClick);
         AddFooterLink("\uE7E8", "Quit", settingsRow, OnQuitClick);
         parent.Children.Add(settingsRow);
+
+        // Keyboard shortcuts hint
+        var shortcutsHint = new Grid { Margin = new Thickness(0, 12, 0, 0) };
+        
+        var hintText = new TextBlock
+        {
+            Text = "Press ? for shortcuts",
+            FontSize = 10,
+            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(100, 
+                _isDarkMode ? (byte)255 : (byte)0, 
+                _isDarkMode ? (byte)255 : (byte)0, 
+                _isDarkMode ? (byte)255 : (byte)0)),
+            HorizontalAlignment = HorizontalAlignment.Center
+        };
+        
+        // Make the hint clickable
+        hintText.PointerPressed += (s, e) => ShowShortcutsHelp();
+        hintText.PointerEntered += (s, e) => 
+        {
+            hintText.Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(180, 
+                _isDarkMode ? (byte)255 : (byte)0, 
+                _isDarkMode ? (byte)255 : (byte)0, 
+                _isDarkMode ? (byte)255 : (byte)0));
+        };
+        hintText.PointerExited += (s, e) => 
+        {
+            hintText.Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(100, 
+                _isDarkMode ? (byte)255 : (byte)0, 
+                _isDarkMode ? (byte)255 : (byte)0, 
+                _isDarkMode ? (byte)255 : (byte)0));
+        };
+        
+        shortcutsHint.Children.Add(hintText);
+        parent.Children.Add(shortcutsHint);
     }
 
     public event Action? SettingsRequested;
@@ -1172,6 +1251,22 @@ public sealed class TrayPopupWindow : Window
         _usageSectionsPanel.Children.Clear();
         BuildUsageSections(snapshot, provider);
 
+        // Update chart - disabled
+        // try
+        // {
+        //     if (_usageChart != null)
+        //     {
+        //         _usageChart.ProviderId = _selectedProviderId;
+        //         _usageChart.ProviderColor = GetProviderColorById(_selectedProviderId);
+        //         _usageChart.IsDarkMode = _isDarkMode;
+        //         _usageChart.Refresh();
+        //     }
+        // }
+        // catch (Exception ex)
+        // {
+        //     DebugLogger.LogError("TrayPopup", "Chart update failed", ex);
+        // }
+
         // Update footer
         _lastUpdatedText.Text = $"Updated: {_viewModel.LastUpdatedText}";
 
@@ -1442,6 +1537,217 @@ public sealed class TrayPopupWindow : Window
             return Windows.UI.Color.FromArgb(255, 255, 152, 0);  // Orange
         return Windows.UI.Color.FromArgb(255, 76, 175, 80);      // Green
     }
+
+    #region Keyboard Navigation
+
+    // Keyboard shortcut state
+    private bool _showingShortcutsHelp;
+    private Border? _shortcutsHelpPanel;
+
+    private void OnKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        switch (e.Key)
+        {
+            // Escape - Close popup (if not pinned) or hide shortcuts help
+            case VirtualKey.Escape:
+                if (_showingShortcutsHelp)
+                {
+                    HideShortcutsHelp();
+                }
+                else if (!_isPinned)
+                {
+                    LightDismiss?.Invoke();
+                }
+                e.Handled = true;
+                break;
+
+            // R - Refresh
+            case VirtualKey.R:
+                _ = OnRefreshClick();
+                e.Handled = true;
+                break;
+
+            // S - Open Settings
+            case VirtualKey.S:
+                OnSettingsClick();
+                e.Handled = true;
+                break;
+
+            // D - Open Dashboard in browser
+            case VirtualKey.D:
+                OnUsageDashboardClick();
+                e.Handled = true;
+                break;
+
+            // P - Toggle Pin
+            case VirtualKey.P:
+                OnPinClick();
+                e.Handled = true;
+                break;
+
+            // ? or / - Show keyboard shortcuts help (using F1 as alternative since / key is complex)
+            case VirtualKey.F1:
+            case (VirtualKey)191: // Forward slash / question mark key on US keyboard
+                ToggleShortcutsHelp();
+                e.Handled = true;
+                break;
+
+            // 1-9 - Switch to provider N
+            case VirtualKey.Number1:
+            case VirtualKey.Number2:
+            case VirtualKey.Number3:
+            case VirtualKey.Number4:
+            case VirtualKey.Number5:
+            case VirtualKey.Number6:
+            case VirtualKey.Number7:
+            case VirtualKey.Number8:
+            case VirtualKey.Number9:
+                var index = (int)e.Key - (int)VirtualKey.Number1;
+                SwitchToProviderByIndex(index);
+                e.Handled = true;
+                break;
+
+            // Tab - Next provider
+            case VirtualKey.Tab:
+                NavigateToNextProvider(forward: true);
+                e.Handled = true;
+                break;
+        }
+    }
+
+    private void SwitchToProviderByIndex(int index)
+    {
+        var enabledProviders = ProviderRegistry.Instance.GetAllProviders()
+            .Where(p => SettingsService.Instance.Settings.IsProviderEnabled(p.Id))
+            .ToList();
+
+        if (enabledProviders.Count == 0)
+        {
+            enabledProviders = ProviderRegistry.Instance.GetAllProviders().ToList();
+        }
+
+        if (index >= 0 && index < enabledProviders.Count)
+        {
+            var provider = enabledProviders[index];
+            OnProviderTabClick(provider.Id);
+        }
+    }
+
+    private void NavigateToNextProvider(bool forward)
+    {
+        var enabledProviders = ProviderRegistry.Instance.GetAllProviders()
+            .Where(p => SettingsService.Instance.Settings.IsProviderEnabled(p.Id))
+            .ToList();
+
+        if (enabledProviders.Count == 0)
+        {
+            enabledProviders = ProviderRegistry.Instance.GetAllProviders().ToList();
+        }
+
+        var currentIndex = enabledProviders.FindIndex(p => p.Id == _selectedProviderId);
+        int nextIndex;
+
+        if (forward)
+        {
+            nextIndex = (currentIndex + 1) % enabledProviders.Count;
+        }
+        else
+        {
+            nextIndex = currentIndex - 1;
+            if (nextIndex < 0) nextIndex = enabledProviders.Count - 1;
+        }
+
+        if (nextIndex >= 0 && nextIndex < enabledProviders.Count)
+        {
+            OnProviderTabClick(enabledProviders[nextIndex].Id);
+        }
+    }
+
+    private void ToggleShortcutsHelp()
+    {
+        if (_showingShortcutsHelp)
+            HideShortcutsHelp();
+        else
+            ShowShortcutsHelp();
+    }
+
+    private void ShowShortcutsHelp()
+    {
+        if (_showingShortcutsHelp || _shortcutsHelpPanel != null) return;
+
+        _showingShortcutsHelp = true;
+
+        // Create overlay panel
+        _shortcutsHelpPanel = new Border
+        {
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(240, 30, 30, 35)),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(16),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(60, 255, 255, 255)),
+            BorderThickness = new Thickness(1)
+        };
+
+        var content = new StackPanel { Spacing = 8 };
+
+        // Title
+        content.Children.Add(new TextBlock
+        {
+            Text = "Keyboard Shortcuts",
+            FontSize = 14,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 255, 255)),
+            Margin = new Thickness(0, 0, 0, 8)
+        });
+
+        // Shortcuts
+        AddShortcutHelpRow(content, "1-9", "Switch provider");
+        AddShortcutHelpRow(content, "Tab", "Next provider");
+        AddShortcutHelpRow(content, "R", "Refresh");
+        AddShortcutHelpRow(content, "D", "Open dashboard");
+        AddShortcutHelpRow(content, "S", "Settings");
+        AddShortcutHelpRow(content, "P", "Pin/Unpin");
+        AddShortcutHelpRow(content, "Esc", "Close");
+        AddShortcutHelpRow(content, "?", "Toggle this help");
+
+        // Global hotkey hint
+        var globalHint = SettingsService.Instance.Settings.HotkeyDisplayString ?? "Win + Shift + Q";
+        content.Children.Add(new Border
+        {
+            Height = 1,
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(40, 255, 255, 255)),
+            Margin = new Thickness(0, 8, 0, 8)
+        });
+        AddShortcutHelpRow(content, globalHint, "Toggle popup (global)");
+
+        _shortcutsHelpPanel.Child = content;
+        _rootGrid.Children.Add(_shortcutsHelpPanel);
+    }
+
+    private void AddShortcutHelpRow(StackPanel parent, string shortcut, string description)
+    {
+        var row = new ShortcutHintRow
+        {
+            Shortcut = shortcut,
+            Description = description,
+            IsDarkMode = true,
+            Margin = new Thickness(0, 2, 0, 2)
+        };
+        parent.Children.Add(row);
+    }
+
+    private void HideShortcutsHelp()
+    {
+        if (_shortcutsHelpPanel != null)
+        {
+            _rootGrid.Children.Remove(_shortcutsHelpPanel);
+            _shortcutsHelpPanel = null;
+        }
+        _showingShortcutsHelp = false;
+    }
+
+    #endregion
 
     private void OnPointerEntered(object sender, PointerRoutedEventArgs e) => PointerEnteredPopup?.Invoke();
     private void OnPointerExited(object sender, PointerRoutedEventArgs e) => PointerExitedPopup?.Invoke();

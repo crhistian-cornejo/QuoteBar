@@ -97,16 +97,14 @@ public static class ClaudeOAuthUsageFetcher
         request.Headers.Add("anthropic-beta", BetaHeader);
         request.Headers.Add("User-Agent", "QuoteBar");
 
-        System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-            $"[{DateTime.Now}] ClaudeOAuthUsageFetcher: Fetching from {BaseUrl}{UsagePath}\n");
+        Core.Services.DebugLogger.Log("ClaudeOAuthUsageFetcher", $"Fetching from {BaseUrl}{UsagePath}");
 
         try
         {
             var response = await client.SendAsync(request, cancellationToken);
             var content = await response.Content.ReadAsStringAsync(cancellationToken);
 
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] ClaudeOAuthUsageFetcher: Status={response.StatusCode}, Body={content.Substring(0, Math.Min(500, content.Length))}\n");
+            Core.Services.DebugLogger.Log("ClaudeOAuthUsageFetcher", $"Status={response.StatusCode}, Body={content.Substring(0, Math.Min(200, content.Length))}...");
 
             switch ((int)response.StatusCode)
             {

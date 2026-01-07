@@ -4,6 +4,10 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Application.Resources>
         <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+            </ResourceDictionary.MergedDictionaries>
+
             <!-- Color Brushes -->
             <SolidColorBrush x:Key="ClaudePrimaryBrush" Color="#D97757"/>
             <SolidColorBrush x:Key="CodexPrimaryBrush" Color="#7C3AED"/>

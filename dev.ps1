@@ -25,8 +25,8 @@ param(
 $ErrorActionPreference = "Stop"
 $ProjectPath = Join-Path $PSScriptRoot "NativeBar.WinUI"
 $SolutionPath = Join-Path $PSScriptRoot "NativeBar.sln"
-$ExePath = Join-Path $ProjectPath "bin\Release\net9.0-windows10.0.19041.0\win-x64\NativeBar.WinUI.exe"
-$DebugExePath = Join-Path $ProjectPath "bin\Debug\net9.0-windows10.0.19041.0\win-x64\NativeBar.WinUI.exe"
+$ExePath = Join-Path $ProjectPath "bin\x64\Release\net9.0-windows10.0.19041.0\win-x64\NativeBar.WinUI.exe"
+$DebugExePath = Join-Path $ProjectPath "bin\x64\Debug\net9.0-windows10.0.19041.0\win-x64\NativeBar.WinUI.exe"
 
 function Write-Status($message) {
     Write-Host "[$([DateTime]::Now.ToString('HH:mm:ss'))] $message" -ForegroundColor Cyan

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using NativeBar.WinUI.Core.Models;
+using NativeBar.WinUI.Core.Providers.Antigravity;
 using NativeBar.WinUI.Core.Providers.Codex;
 using NativeBar.WinUI.Core.Providers.Claude;
 using NativeBar.WinUI.Core.Providers.Cursor;
@@ -47,6 +48,7 @@ public class ProviderRegistry
         Register(new CodexProviderDescriptor());
         Register(new ClaudeProviderDescriptor());
         Register(new CursorProviderDescriptor());
+        Register(new AntigravityProviderDescriptor());
         Register(new DroidProviderDescriptor());
         Register(new GeminiProviderDescriptor());
         Register(new CopilotProviderDescriptor());
@@ -128,11 +130,6 @@ public class UsageFetcher
     
     private static void Log(string message)
     {
-        try
-        {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] UsageFetcher: {message}\n");
-        }
-        catch { }
+        Core.Services.DebugLogger.Log("UsageFetcher", message);
     }
 }

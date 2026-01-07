@@ -42,11 +42,11 @@
         <!-- WebView2 Container -->
         <Grid Grid.Row="1">
             <!-- Loading overlay -->
-            <Border 
+            <Border
                 x:Name="LoadingOverlay"
-                Background="#1a1a2e" 
+                Background="#1a1a2e"
                 Visibility="Visible"
-                ZIndex="10">
+                Canvas.ZIndex="10">
                 <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="16">
                     <ProgressRing IsActive="True" Width="48" Height="48"/>
                     <TextBlock 

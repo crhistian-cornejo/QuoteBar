@@ -194,12 +194,7 @@ public static class SecureCredentialStore
 
     private static void Log(string message)
     {
-        try
-        {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] SecureCredentialStore: {message}\n");
-        }
-        catch { }
+        DebugLogger.Log("SecureCredentialStore", message);
     }
 }
 

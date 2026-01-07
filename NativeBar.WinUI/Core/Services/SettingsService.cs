@@ -37,8 +37,7 @@ public class SettingsService
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] SettingsService.Load ERROR: {ex.Message}\n");
+            DebugLogger.LogError("SettingsService", "Load error", ex);
             Settings = new AppSettings();
         }
     }
@@ -60,8 +59,7 @@ public class SettingsService
         }
         catch (Exception ex)
         {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] SettingsService.Save ERROR: {ex.Message}\n");
+            DebugLogger.LogError("SettingsService", "Save error", ex);
         }
     }
 }
@@ -95,6 +93,17 @@ public class AppSettings
 
     // Provider configs
     public Dictionary<string, ProviderConfig> Providers { get; set; } = new();
+
+    // Copilot-specific settings
+    // Plan types: "auto", "free", "pro", "pro_plus"
+    public string CopilotPlanType { get; set; } = "auto";
+
+    // Hotkey settings
+    // Default: Win+Shift+Q (safe, doesn't conflict with Windows shortcuts)
+    public bool HotkeyEnabled { get; set; } = true;
+    public string HotkeyKey { get; set; } = "Q";
+    public List<string> HotkeyModifiers { get; set; } = new() { "Win", "Shift" };
+    public string? HotkeyDisplayString { get; set; } = "Win + Shift + Q";
 
     // Note: API tokens are stored securely in Windows Credential Manager via SecureCredentialStore
     // Do NOT add API tokens as properties here - they would be stored in plain text in settings.json

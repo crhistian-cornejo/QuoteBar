@@ -1,8 +1,7 @@
 using System.IO;
-using System.Runtime.InteropServices;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using NativeBar.WinUI.Core.Services;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -34,28 +33,25 @@ public class CopilotOAuthCredentialsException : Exception
 }
 
 /// <summary>
-/// Manages loading GitHub Copilot OAuth credentials from various sources:
-/// 1. Windows Credential Manager (GitHub CLI stores tokens here)
-/// 2. GitHub CLI hosts.yml config file
-/// 3. Environment variables (GITHUB_TOKEN, GH_TOKEN)
-/// 4. VS Code Copilot extension settings
+/// Manages loading GitHub Copilot OAuth credentials from safe sources:
+/// 1. Environment variables (GITHUB_TOKEN, GH_TOKEN, COPILOT_TOKEN)
+/// 2. GitHub CLI hosts.yml config file (user's own authenticated session)
+/// 
+/// SECURITY NOTE: This class intentionally does NOT access:
+/// - Windows Credential Manager entries from other applications (VS Code, Git)
+/// - Browser credential databases
+/// - Any third-party application's stored credentials
+/// 
+/// This avoids antivirus/EDR detections for credential theft (MITRE T1555.003/T1555.004)
 /// </summary>
 public static class CopilotOAuthCredentialsStore
 {
-    // GitHub CLI config paths
+    // GitHub CLI config path - this is the user's own authenticated session
     private static readonly string GhCliConfigPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "GitHub CLI", "hosts.yml");
 
-    // VS Code Copilot credential targets in Windows Credential Manager
-    private static readonly string[] CredentialManagerTargets = new[]
-    {
-        "github.com/github.copilot", // VS Code Copilot extension
-        "git:https://github.com",     // Git credential manager
-        "github.com",                  // General GitHub credential
-    };
-
-    // Cache to avoid repeated credential manager access
+    // Cache to avoid repeated file access
     private static CopilotOAuthCredentials? _cachedCredentials;
     private static DateTime? _cacheTimestamp;
     private static readonly TimeSpan CacheValidityDuration = TimeSpan.FromMinutes(1);
@@ -79,7 +75,7 @@ public static class CopilotOAuthCredentialsStore
 
         Exception? lastError = null;
 
-        // 1. Try environment variables first (highest priority)
+        // 1. Try environment variables first (highest priority, most explicit)
         try
         {
             var envToken = LoadFromEnvironment();
@@ -101,24 +97,7 @@ public static class CopilotOAuthCredentialsStore
             Log($"Environment variable check failed: {ex.Message}");
         }
 
-        // 2. Try Windows Credential Manager
-        try
-        {
-            var credManagerToken = LoadFromCredentialManager();
-            if (credManagerToken != null)
-            {
-                UpdateCache(credManagerToken);
-                Log($"Loaded token from Windows Credential Manager");
-                return credManagerToken;
-            }
-        }
-        catch (Exception ex)
-        {
-            lastError = ex;
-            Log($"Credential Manager failed: {ex.Message}");
-        }
-
-        // 3. Try GitHub CLI hosts.yml
+        // 2. Try GitHub CLI hosts.yml (user's own authenticated session via 'gh auth login')
         try
         {
             var ghCliCreds = LoadFromGhCli();
@@ -136,7 +115,7 @@ public static class CopilotOAuthCredentialsStore
         }
 
         throw new CopilotOAuthCredentialsException(
-            "No GitHub Copilot credentials found. Please authenticate using 'gh auth login' or sign in to the Copilot extension in VS Code.",
+            "No GitHub Copilot credentials found. Please authenticate using 'gh auth login' in your terminal, or set the GITHUB_TOKEN environment variable.",
             lastError!);
     }
 
@@ -191,32 +170,6 @@ public static class CopilotOAuthCredentialsStore
         return null;
     }
 
-    private static CopilotOAuthCredentials? LoadFromCredentialManager()
-    {
-        foreach (var target in CredentialManagerTargets)
-        {
-            try
-            {
-                var credential = CopilotCredentialManager.ReadCredential(target);
-                if (!string.IsNullOrEmpty(credential?.Password))
-                {
-                    return new CopilotOAuthCredentials
-                    {
-                        AccessToken = credential.Password,
-                        Username = credential.Username,
-                        TokenType = "credential_manager"
-                    };
-                }
-            }
-            catch (Exception ex)
-            {
-                Log($"Failed to read credential '{target}': {ex.Message}");
-            }
-        }
-
-        return null;
-    }
-
     private static CopilotOAuthCredentials? LoadFromGhCli()
     {
         if (!File.Exists(GhCliConfigPath))
@@ -258,12 +211,7 @@ public static class CopilotOAuthCredentialsStore
 
     private static void Log(string message)
     {
-        try
-        {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] CopilotOAuthCredentialsStore: {message}\n");
-        }
-        catch { }
+        DebugLogger.Log("CopilotOAuthCredentialsStore", message);
     }
 
     private class GhCliHost
@@ -276,102 +224,5 @@ public static class CopilotOAuthCredentialsStore
 
         [YamlMember(Alias = "git_protocol")]
         public string? GitProtocol { get; set; }
-    }
-}
-
-/// <summary>
-/// Credential result from Windows Credential Manager
-/// </summary>
-internal class CredentialResult
-{
-    public string? Username { get; set; }
-    public string? Password { get; set; }
-}
-
-/// <summary>
-/// Windows Credential Manager P/Invoke wrapper for Copilot
-/// </summary>
-internal static class CopilotCredentialManager
-{
-    public static CredentialResult? ReadCredential(string targetName)
-    {
-        IntPtr credPtr = IntPtr.Zero;
-        try
-        {
-            bool success = CredRead(targetName, CRED_TYPE_GENERIC, 0, out credPtr);
-            if (!success)
-            {
-                int error = Marshal.GetLastWin32Error();
-                if (error == ERROR_NOT_FOUND)
-                    return null;
-                // Don't throw, just return null for other errors
-                return null;
-            }
-
-            var cred = Marshal.PtrToStructure<CREDENTIAL>(credPtr);
-            
-            string? username = cred.UserName != IntPtr.Zero 
-                ? Marshal.PtrToStringUni(cred.UserName) 
-                : null;
-
-            string? password = null;
-            if (cred.CredentialBlobSize > 0 && cred.CredentialBlob != IntPtr.Zero)
-            {
-                byte[] passwordBytes = new byte[cred.CredentialBlobSize];
-                Marshal.Copy(cred.CredentialBlob, passwordBytes, 0, (int)cred.CredentialBlobSize);
-
-                // Try UTF-16 first (Windows default), then UTF-8
-                try
-                {
-                    password = Encoding.Unicode.GetString(passwordBytes);
-                    // Validate - if it contains too many null chars, try UTF-8
-                    if (password.Count(c => c == '\0') > password.Length / 4)
-                    {
-                        password = Encoding.UTF8.GetString(passwordBytes).TrimEnd('\0');
-                    }
-                }
-                catch
-                {
-                    password = Encoding.UTF8.GetString(passwordBytes).TrimEnd('\0');
-                }
-            }
-
-            return new CredentialResult
-            {
-                Username = username,
-                Password = password
-            };
-        }
-        finally
-        {
-            if (credPtr != IntPtr.Zero)
-                CredFree(credPtr);
-        }
-    }
-
-    private const int CRED_TYPE_GENERIC = 1;
-    private const int ERROR_NOT_FOUND = 1168;
-
-    [DllImport("advapi32.dll", EntryPoint = "CredReadW", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern bool CredRead(string target, int type, int reservedFlag, out IntPtr credential);
-
-    [DllImport("advapi32.dll", SetLastError = true)]
-    private static extern bool CredFree(IntPtr credential);
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    private struct CREDENTIAL
-    {
-        public uint Flags;
-        public uint Type;
-        public IntPtr TargetName;
-        public IntPtr Comment;
-        public System.Runtime.InteropServices.ComTypes.FILETIME LastWritten;
-        public uint CredentialBlobSize;
-        public IntPtr CredentialBlob;
-        public uint Persist;
-        public uint AttributeCount;
-        public IntPtr Attributes;
-        public IntPtr TargetAlias;
-        public IntPtr UserName;
     }
 }

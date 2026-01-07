@@ -11,6 +11,7 @@ public class CursorProviderDescriptor : ProviderDescriptor
     public override string SecondaryColor => "#5AC8FA";
     public override string PrimaryLabel => "Plan usage";
     public override string SecondaryLabel => "On-demand";
+public override string? DashboardUrl => "https://cursor.com/settings";
 
     public override bool SupportsOAuth => true;
     public override bool SupportsCLI => false;
@@ -60,12 +61,7 @@ public class CursorCachedStrategy : IProviderFetchStrategy
 
     private static void Log(string message)
     {
-        try
-        {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] CursorCachedStrategy: {message}\n");
-        }
-        catch { }
+        Core.Services.DebugLogger.Log("CursorCachedStrategy", message);
     }
 }
 
@@ -157,12 +153,7 @@ public class CursorManualCookieStrategy : IProviderFetchStrategy
 
     private static void Log(string message)
     {
-        try
-        {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] CursorManualStrategy: {message}\n");
-        }
-        catch { }
+        Core.Services.DebugLogger.Log("CursorManualStrategy", message);
     }
 }
 
@@ -237,12 +228,7 @@ public class CursorStoredSessionStrategy : IProviderFetchStrategy
 
     private static void Log(string message)
     {
-        try
-        {
-            System.IO.File.AppendAllText("D:\\NativeBar\\debug.log",
-                $"[{DateTime.Now}] CursorStoredStrategy: {message}\n");
-        }
-        catch { }
+        Core.Services.DebugLogger.Log("CursorStoredStrategy", message);
     }
 }
 
