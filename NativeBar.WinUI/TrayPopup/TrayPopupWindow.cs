@@ -574,7 +574,7 @@ public sealed class TrayPopupWindow : Window
             "droid" => Windows.UI.Color.FromArgb(255, 238, 96, 24),     // #EE6018
             "zai" => Windows.UI.Color.FromArgb(255, 232, 90, 106),      // #E85A6A
             "minimax" => Windows.UI.Color.FromArgb(255, 226, 22, 126),   // #E2167E
-            "augment" => Windows.UI.Color.FromArgb(255, 99, 102, 241),   // #6366F1 (Indigo)
+            "augment" => Windows.UI.Color.FromArgb(255, 60, 60, 60),   // Dark gray (neutral)
             _ => Windows.UI.Color.FromArgb(255, 100, 100, 100)
         };
     }
@@ -593,7 +593,7 @@ public sealed class TrayPopupWindow : Window
             "droid" => "#EE6018",
             "zai" => "#E85A6A",
             "minimax" => "#E2167E",
-            "augment" => "#6366F1",
+            "augment" => "#3C3C3C",
             _ => "#646464"
         };
     }
@@ -778,6 +778,7 @@ public sealed class TrayPopupWindow : Window
             "antigravity" => "antigravity.svg",
             "zai" => "zai.svg",
             "minimax" => "minimax-color.svg",
+            "augment" => "augment.svg",
             _ => null
         };
     }
@@ -801,7 +802,7 @@ public sealed class TrayPopupWindow : Window
             "codex" => _isDarkMode ? Colors.White : Windows.UI.Color.FromArgb(255, 0, 0, 0),
             "copilot" => _isDarkMode ? Colors.White : Windows.UI.Color.FromArgb(255, 36, 41, 47),
             "zai" => _isDarkMode ? Colors.White : Windows.UI.Color.FromArgb(255, 0, 0, 0),
-            "augment" => Windows.UI.Color.FromArgb(255, 99, 102, 241),        // #6366F1 Indigo
+            "augment" => _isDarkMode ? Colors.White : Windows.UI.Color.FromArgb(255, 0, 0, 0), // White/Black
 
             // Brand colors that work in both modes
             "minimax" => Windows.UI.Color.FromArgb(255, 226, 22, 126),        // #E2167E Pink (gradient start)
@@ -1621,6 +1622,7 @@ public sealed class TrayPopupWindow : Window
         var progressTrack = new Border
         {
             Height = progressHeight,
+            Width = progressWidth,
             CornerRadius = new CornerRadius(progressRadius),
             Background = new SolidColorBrush(ProgressTrackColor)
         };

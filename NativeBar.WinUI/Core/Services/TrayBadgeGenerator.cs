@@ -29,7 +29,7 @@ public static class TrayBadgeGenerator
         { "droid", Color.FromArgb(238, 96, 24) },      // #EE6018
         { "antigravity", Color.FromArgb(255, 107, 107) }, // #FF6B6B
         { "zai", Color.FromArgb(232, 90, 106) },        // #E85A6A
-        { "augment", Color.FromArgb(99, 102, 241) }     // #6366F1
+        { "augment", Color.FromArgb(60, 60, 60) }         // Dark gray (neutral)
     };
 
     /// <summary>

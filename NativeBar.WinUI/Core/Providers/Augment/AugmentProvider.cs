@@ -14,7 +14,7 @@ public sealed class AugmentProviderDescriptor : ProviderDescriptor
     public override string Id => "augment";
     public override string DisplayName => "Augment";
     public override string IconGlyph => "\uE950"; // Code icon
-    public override string PrimaryColor => "#6366F1"; // Indigo
+    public override string PrimaryColor => "#3C3C3C"; // Dark gray (neutral)
     public override string SecondaryColor => "#8B5CF6"; // Purple
     public override string PrimaryLabel => "Credits";
     public override string SecondaryLabel => "Usage";
@@ -28,17 +28,20 @@ public sealed class AugmentProviderDescriptor : ProviderDescriptor
 
     protected override void InitializeStrategies()
     {
-        // Priority 10: CLI session.json (preferred - uses user's own authenticated session)
-        AddStrategy(new AugmentSessionFetchStrategy());
-
-        // Priority 1: Cookie fallback (manual configuration)
+        // Priority 10: Cookie header (preferred - required for web API)
+        // NOTE: The CLI session.json accessToken is for IDE API, NOT the web dashboard API.
+        // The web API at app.augmentcode.com requires browser session cookies.
         AddStrategy(new AugmentCookieFetchStrategy());
+
+        // Priority 1: CLI session.json (fallback - may not work for web API)
+        AddStrategy(new AugmentSessionFetchStrategy());
     }
 }
 
 /// <summary>
 /// Fetch strategy using Augment CLI session.json
-/// This is the preferred method as it uses the user's own authenticated CLI session.
+/// NOTE: This is a FALLBACK method. The CLI session token is for the IDE API,
+/// NOT the web dashboard API. The web API requires browser cookies.
 ///
 /// Checks in order:
 /// 1. AUGMENT_SESSION_AUTH environment variable
@@ -47,7 +50,7 @@ public sealed class AugmentProviderDescriptor : ProviderDescriptor
 public sealed class AugmentSessionFetchStrategy : IProviderFetchStrategy
 {
     public string StrategyName => "CLI Session";
-    public int Priority => 10; // Higher priority than cookie
+    public int Priority => 1; // Lower priority - CLI token usually doesn't work for web API
 
     public Task<bool> CanExecuteAsync()
     {
@@ -77,11 +80,13 @@ public sealed class AugmentSessionFetchStrategy : IProviderFetchStrategy
 
 /// <summary>
 /// Fetch strategy using browser cookies for Augment
+/// This is the PREFERRED method as the web API requires browser session cookies.
+/// The user needs to copy cookies from browser DevTools.
 /// </summary>
 public sealed class AugmentCookieFetchStrategy : IProviderFetchStrategy
 {
     public string StrategyName => "Cookie";
-    public int Priority => 1;
+    public int Priority => 10; // Higher priority - this is what actually works
 
     public Task<bool> CanExecuteAsync()
     {

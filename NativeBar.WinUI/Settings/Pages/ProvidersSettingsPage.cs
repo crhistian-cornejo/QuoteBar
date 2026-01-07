@@ -86,7 +86,7 @@ public class ProvidersSettingsPage : ISettingsPage
             visibilityStack.Children.Add(CreateProviderToggle("Droid", "droid", "#EE6018"));
             visibilityStack.Children.Add(CreateProviderToggle("Antigravity", "antigravity", "#FF6B6B"));
             visibilityStack.Children.Add(CreateProviderToggle("z.ai", "zai", "#E85A6A"));
-            visibilityStack.Children.Add(CreateProviderToggle("Augment", "augment", "#6366F1"));
+            visibilityStack.Children.Add(CreateProviderToggle("Augment", "augment", "#3C3C3C"));
 
             visibilityCard.Child = visibilityStack;
             stack.Children.Add(visibilityCard);
@@ -109,7 +109,7 @@ public class ProvidersSettingsPage : ISettingsPage
             stack.Children.Add(CreateProviderCardWithAutoDetect("Droid", "droid", "#EE6018"));
             stack.Children.Add(CreateProviderCardWithAutoDetect("Antigravity", "antigravity", "#FF6B6B"));
             stack.Children.Add(CreateZaiProviderCard());
-            stack.Children.Add(CreateProviderCardWithAutoDetect("Augment", "augment", "#6366F1"));
+            stack.Children.Add(CreateProviderCardWithAutoDetect("Augment", "augment", "#3C3C3C"));
 
             scroll.Content = stack;
             DebugLogger.Log("ProvidersSettingsPage", "CreateContent DONE");
@@ -407,6 +407,11 @@ public class ProvidersSettingsPage : ISettingsPage
             await LaunchDroidLoginAsync();
             return;
         }
+        if (providerId.ToLower() == "augment")
+        {
+            await LaunchAugmentLoginAsync();
+            return;
+        }
 
         if (_content?.XamlRoot == null) return;
 
@@ -416,7 +421,6 @@ public class ProvidersSettingsPage : ISettingsPage
             "codex" => "To connect Codex:\n\n1. Install the Codex CLI\n2. Run: codex auth login\n3. Click 'Retry Detection'",
             "claude" => "To connect Claude:\n\n1. Install the Claude CLI\n2. Run: claude auth login\n3. Complete OAuth in browser\n4. Click 'Retry Detection'",
             "antigravity" => "To connect Antigravity:\n\n1. Launch Antigravity IDE\n2. Make sure it's running and logged in\n3. Click 'Retry Detection'",
-            "augment" => "To connect Augment:\n\n1. Install the Augment CLI\n2. Run: augment login\n3. Complete authentication in browser\n4. Click 'Retry Detection'\n\nThe session is stored at ~/.augment/session.json",
             _ => $"Configuration for {name} is not yet available."
         };
 
@@ -499,6 +503,25 @@ public class ProvidersSettingsPage : ISettingsPage
         }
     }
 
+    private async Task LaunchAugmentLoginAsync()
+    {
+        try
+        {
+            var result = await AugmentLoginHelper.LaunchLoginAsync();
+            if (result.IsSuccess)
+            {
+                var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+                if (usageStore != null) await usageStore.RefreshAsync("augment");
+                await Task.Delay(500);
+                RequestRefresh?.Invoke();
+            }
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("ProvidersSettingsPage", "LaunchAugmentLoginAsync failed", ex);
+        }
+    }
+
     private void DisconnectProvider(string providerId)
     {
         try
@@ -570,14 +593,13 @@ public class ProvidersSettingsPage : ISettingsPage
                         return (true, "API token configured");
                     break;
                 case "augment":
-                    if (AugmentSessionStore.HasSession())
-                        return (true, "CLI session detected");
+                    // Only cookies work for Augment web API - CLI session doesn't work
                     if (AugmentCredentialStore.HasCredentials())
-                        return (true, "Cookie configured");
+                        return (true, "Session stored");
                     break;
             }
 
-            var needsCLICheck = providerId.ToLower() is "codex" or "claude" or "gemini" or "copilot" or "droid" or "augment";
+            var needsCLICheck = providerId.ToLower() is "codex" or "claude" or "gemini" or "copilot" or "droid";
             return (false, needsCLICheck ? "Checking..." : "Not configured");
         }
         catch
@@ -634,9 +656,8 @@ public class ProvidersSettingsPage : ISettingsPage
                     if (CanDetectCLI("droid", "--version")) return (true, "CLI detected");
                     break;
                 case "augment":
-                    // Check if session.json exists (created by 'augment login')
-                    if (AugmentSessionStore.HasSession()) return (true, "CLI session detected");
-                    if (AugmentCredentialStore.HasCredentials()) return (true, "Cookie configured");
+                    // Only cookies work for Augment web API - CLI session doesn't work
+                    if (AugmentCredentialStore.HasCredentials()) return (true, "Session stored");
                     break;
             }
             return (false, "Not configured");
@@ -1022,7 +1043,7 @@ public class ProvidersSettingsPage : ISettingsPage
                         Width = 36,
                         Height = 36,
                         CornerRadius = new CornerRadius(8),
-                        Background = new SolidColorBrush(ProviderIconHelper.ParseColor("#6366F1")), // Indigo
+                        Background = new SolidColorBrush(ProviderIconHelper.ParseColor("#3C3C3C")), // Dark gray (neutral)
                         Padding = new Thickness(6)
                     };
                     augmentBorder.Child = new Image
