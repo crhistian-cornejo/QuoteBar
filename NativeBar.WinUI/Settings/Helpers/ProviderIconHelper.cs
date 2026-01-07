@@ -32,7 +32,7 @@ public static class ProviderIconHelper
                 "droid" => "droid-white.svg",
                 "antigravity" => "antigravity.svg",
                 "zai" => "zai-white.svg",
-                "minimax" => "minimax-white.svg",
+                "minimax" => null, // MiniMax uses letter fallback (SVG causes WinUI crash)
                 "augment" => "augment-white.svg",
                 _ => null
             };
@@ -49,7 +49,7 @@ public static class ProviderIconHelper
             "droid" => isDark ? "droid-white.svg" : "droid.svg",
             "antigravity" => isDark ? "antigravity.svg" : "antigravity-black.svg",
             "zai" => isDark ? "zai-white.svg" : "zai.svg",
-            "minimax" => "minimax-color.svg",
+            "minimax" => null, // MiniMax uses color dot fallback (SVG causes WinUI crash)
             "augment" => isDark ? "augment-white.svg" : "augment.svg",
             _ => null
         };

@@ -87,7 +87,7 @@ public class ProvidersSettingsPage : ISettingsPage
             visibilityStack.Children.Add(CreateProviderToggle("Cursor", "cursor", "#007AFF"));
             visibilityStack.Children.Add(CreateProviderToggle("Droid", "droid", "#EE6018"));
             visibilityStack.Children.Add(CreateProviderToggle("Gemini", "gemini", "#4285F4"));
-            // visibilityStack.Children.Add(CreateProviderToggle("MiniMax", "minimax", "#E2167E")); // DISABLED FOR DEBUGGING
+            visibilityStack.Children.Add(CreateProviderToggle("MiniMax", "minimax", "#E2167E")); // TEST: only toggle
             visibilityStack.Children.Add(CreateProviderToggle("z.ai", "zai", "#E85A6A"));
 
             visibilityCard.Child = visibilityStack;
@@ -111,8 +111,8 @@ public class ProvidersSettingsPage : ISettingsPage
             stack.Children.Add(CreateProviderCardWithAutoDetect("Cursor", "cursor", "#007AFF"));
             stack.Children.Add(CreateProviderCardWithAutoDetect("Droid", "droid", "#EE6018"));
             stack.Children.Add(CreateProviderCardWithAutoDetect("Gemini", "gemini", "#4285F4"));
-            // stack.Children.Add(CreateMiniMaxProviderCard()); // DISABLED FOR DEBUGGING
             stack.Children.Add(CreateZaiProviderCard());
+            stack.Children.Add(CreateMiniMaxProviderCard()); // MINIMAL TEST VERSION - moved after z.ai
 
             scroll.Content = stack;
             DebugLogger.Log("ProvidersSettingsPage", "CreateContent DONE");
@@ -712,7 +712,8 @@ public class ProvidersSettingsPage : ISettingsPage
 
     private Border CreateMiniMaxProviderCard()
     {
-        var hasCookie = MiniMaxSettingsReader.HasCookieHeader();
+        // TEST: Hardcoded false + TextBox to test if HasCookieHeader() causes the crash
+        var hasCookie = false; // MiniMaxSettingsReader.HasCookieHeader();
 
         var card = new Border
         {
@@ -736,20 +737,17 @@ public class ProvidersSettingsPage : ISettingsPage
             Width = 36,
             Height = 36,
             CornerRadius = new CornerRadius(8),
-            Background = new SolidColorBrush(ProviderIconHelper.ParseColor("#E2167E"))
-        };
-        var svgPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icons", "minimax-white.svg");
-        if (System.IO.File.Exists(svgPath))
-        {
-            iconBorder.Child = new Image
+            Background = new SolidColorBrush(ProviderIconHelper.ParseColor("#E2167E")),
+            Child = new TextBlock
             {
-                Width = 20,
-                Height = 20,
-                Source = new SvgImageSource(new Uri(svgPath, UriKind.Absolute)),
+                Text = "M",
+                FontSize = 16,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(Colors.White),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
-            };
-        }
+            }
+        };
         Grid.SetColumn(iconBorder, 0);
 
         var infoStack = new StackPanel
@@ -773,7 +771,7 @@ public class ProvidersSettingsPage : ISettingsPage
         });
         statusStack.Children.Add(new TextBlock
         {
-            Text = hasCookie ? "Cookie configured (secure)" : "Not configured",
+            Text = hasCookie ? "Cookie configured" : "Not configured",
             FontSize = 12,
             Foreground = new SolidColorBrush(_theme.SecondaryTextColor)
         });
@@ -784,160 +782,10 @@ public class ProvidersSettingsPage : ISettingsPage
         headerGrid.Children.Add(infoStack);
         mainStack.Children.Add(headerGrid);
 
-        // Cookie input
-        var cookieSection = new StackPanel { Spacing = 10 };
+        // TEST: TextBox with hardcoded hasCookie=false
+        mainStack.Children.Add(new TextBox { PlaceholderText = "Test TextBox", Height = 32 });
 
-        // Row 1: cookie box (full width)
-        var cookieRow = new Grid();
-        cookieRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        cookieRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        var cookieBox = new PasswordBox
-        {
-            PlaceholderText = hasCookie ? "Cookie saved - paste new to replace" : "Paste your MiniMax cookie or cURL",
-            Height = 32,
-            MinWidth = 360
-        };
-        Grid.SetColumn(cookieBox, 0);
-
-        var toggleRevealButton = new Button
-        {
-            Content = "Show",
-            Margin = new Thickness(8, 0, 0, 0),
-            Height = 32
-        };
-        toggleRevealButton.Click += (s, e) =>
-        {
-            var isHidden = cookieBox.PasswordRevealMode != PasswordRevealMode.Visible;
-            cookieBox.PasswordRevealMode = isHidden ? PasswordRevealMode.Visible : PasswordRevealMode.Hidden;
-            toggleRevealButton.Content = isHidden ? "Hide" : "Show";
-        };
-        Grid.SetColumn(toggleRevealButton, 1);
-
-        cookieRow.Children.Add(cookieBox);
-        cookieRow.Children.Add(toggleRevealButton);
-        cookieSection.Children.Add(cookieRow);
-
-        // Row 2: actions
-        var actionsRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-
-        var pasteButton = new Button
-        {
-            Content = "Paste",
-            Height = 30
-        };
-        pasteButton.Click += async (s, e) =>
-        {
-            try
-            {
-                var data = Clipboard.GetContent();
-                if (data.Contains(StandardDataFormats.Text))
-                {
-                    var text = await data.GetTextAsync();
-                    if (!string.IsNullOrWhiteSpace(text))
-                        cookieBox.Password = text.Trim();
-                }
-            }
-            catch
-            {
-                // Ignore clipboard failures
-            }
-        };
-
-        var saveButton = new Button
-        {
-            Content = "Save",
-            Padding = new Thickness(16, 4, 16, 4),
-            Background = new SolidColorBrush(_theme.AccentColor),
-            Foreground = new SolidColorBrush(Colors.White),
-            Height = 30
-        };
-        saveButton.Click += async (s, e) =>
-        {
-            var cookie = string.IsNullOrWhiteSpace(cookieBox.Password) ? null : cookieBox.Password;
-
-            // Show saving state
-            saveButton.IsEnabled = false;
-            saveButton.Content = "Saving...";
-
-            try
-            {
-                var success = MiniMaxSettingsReader.StoreCookieHeader(cookie);
-
-                if (_content?.XamlRoot != null)
-                {
-                    string title, message;
-                    if (!success)
-                    {
-                        title = "Error";
-                        message = "Failed to save cookie to Windows Credential Manager.";
-                    }
-                    else if (string.IsNullOrWhiteSpace(cookie))
-                    {
-                        title = "Cookie Cleared";
-                        message = "Cookie removed from secure storage.";
-                    }
-                    else
-                    {
-                        title = "Cookie Saved Successfully";
-                        message = "Your MiniMax cookie has been saved securely.\n\nUsage data will be refreshed automatically.";
-                    }
-
-                    var dialog = new ContentDialog
-                    {
-                        Title = title,
-                        Content = message,
-                        CloseButtonText = "OK",
-                        XamlRoot = _content.XamlRoot
-                    };
-                    await dialog.ShowAsync();
-                }
-
-                cookieBox.Password = "";
-                cookieBox.PasswordRevealMode = PasswordRevealMode.Hidden;
-                toggleRevealButton.Content = "Show";
-
-                // Trigger data refresh
-                var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
-                if (usageStore != null && !string.IsNullOrWhiteSpace(cookie))
-                {
-                    await usageStore.RefreshAsync("minimax");
-                }
-
-                RequestRefresh?.Invoke();
-            }
-            finally
-            {
-                saveButton.IsEnabled = true;
-                saveButton.Content = "Save";
-            }
-        };
-
-        var openLink = new HyperlinkButton
-        {
-            Content = "Open dashboard",
-            NavigateUri = new Uri("https://platform.minimax.io/user-center/payment/coding-plan"),
-            FontSize = 12,
-            Foreground = new SolidColorBrush(_theme.SecondaryTextColor)
-        };
-
-        actionsRow.Children.Add(pasteButton);
-        actionsRow.Children.Add(saveButton);
-        actionsRow.Children.Add(openLink);
-        cookieSection.Children.Add(actionsRow);
-
-        cookieSection.Children.Add(new TextBlock
-        {
-            Text = "Paste cookie header or 'Copy as cURL' from browser DevTools",
-            FontSize = 11,
-            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
-            TextWrapping = TextWrapping.Wrap,
-            Opacity = 0.7
-        });
-
-        mainStack.Children.Add(cookieSection);
         card.Child = mainStack;
-
         return card;
     }
 
