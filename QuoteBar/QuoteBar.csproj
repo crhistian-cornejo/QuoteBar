@@ -6,7 +6,7 @@
     <RootNamespace>QuoteBar</RootNamespace>
     <AssemblyName>QuoteBar</AssemblyName>
     <Product>QuoteBar</Product>
-    <Version>0.2.0</Version>
+    <Version>0.2.1</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <Platforms>x86;x64;ARM64</Platforms>
