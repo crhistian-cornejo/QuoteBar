@@ -45,23 +45,32 @@ jobs:
       run: |
         Compress-Archive -Path ./publish/win-x64/* -DestinationPath ./QuoteBar-win-x64-v${{ steps.version.outputs.VERSION }}.zip
 
+    - name: Extract changelog for version
+      id: changelog
+      shell: pwsh
+      run: |
+        $version = "${{ steps.version.outputs.VERSION }}"
+        $changelogPath = "CHANGELOG.md"
+
+        if (Test-Path $changelogPath) {
+          $content = Get-Content $changelogPath -Raw
+          # Match section for this version until next version or end
+          if ($content -match "(?s)## \[$version\][^\r\n]*\r?\n(.*?)(?=\r?\n## \[|$)") {
+            $notes = $Matches[1].Trim()
+            # Write to file to preserve formatting
+            $notes | Out-File -FilePath changelog_notes.txt -Encoding utf8
+          } else {
+            "See CHANGELOG.md for details." | Out-File -FilePath changelog_notes.txt -Encoding utf8
+          }
+        } else {
+          "See CHANGELOG.md for details." | Out-File -FilePath changelog_notes.txt -Encoding utf8
+        }
+
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
         name: QuoteBar v${{ steps.version.outputs.VERSION }}
-        body: |
-          ## QuoteBar v${{ steps.version.outputs.VERSION }}
-
-          ### Installation
-          1. Download `QuoteBar-win-x64-v${{ steps.version.outputs.VERSION }}.zip`
-          2. Extract to any folder
-          3. Run `QuoteBar.exe`
-
-          ### What's New
-          See commit history for changes.
-
-          ---
-          Built automatically from tag `v${{ steps.version.outputs.VERSION }}`
+        body_path: changelog_notes.txt
         files: |
           QuoteBar-win-x64-v${{ steps.version.outputs.VERSION }}.zip
         draft: false
