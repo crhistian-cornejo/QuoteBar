@@ -80,9 +80,9 @@ public class AboutSettingsPage : ISettingsPage
             Margin = new Thickness(0, 16, 0, 0)
         };
 
-        linksStack.Children.Add(CreateLinkButton("GitHub", "https://github.com"));
-        linksStack.Children.Add(CreateLinkButton("Website", "https://nativebar.app"));
-        linksStack.Children.Add(CreateLinkButton("Report Issue", "https://github.com/issues"));
+        linksStack.Children.Add(CreateLinkButton("GitHub", "https://github.com/crhistian-cornejo/QuoteBar"));
+        linksStack.Children.Add(CreateLinkButton("Website", "https://github.com/crhistian-cornejo/QuoteBar"));
+        linksStack.Children.Add(CreateLinkButton("Report Issue", "https://github.com/crhistian-cornejo/QuoteBar/issues"));
 
         infoStack.Children.Add(linksStack);
         infoCard.Child = infoStack;
