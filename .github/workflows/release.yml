@@ -43,7 +43,17 @@ jobs:
     - name: Create portable ZIP (x64)
       shell: pwsh
       run: |
-        Compress-Archive -Path ./publish/win-x64/* -DestinationPath ./QuoteBar-win-x64-v${{ steps.version.outputs.VERSION }}.zip
+        Compress-Archive -Path ./publish/win-x64/* -DestinationPath ./QuoteBar-Portable-v${{ steps.version.outputs.VERSION }}.zip
+
+    - name: Install Inno Setup
+      shell: pwsh
+      run: |
+        choco install innosetup -y --no-progress
+
+    - name: Create Installer
+      shell: pwsh
+      run: |
+        & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=${{ steps.version.outputs.VERSION }} installer\QuoteBar.iss
 
     - name: Extract changelog for version
       id: changelog
@@ -66,13 +76,38 @@ jobs:
           "See CHANGELOG.md for details." | Out-File -FilePath changelog_notes.txt -Encoding utf8
         }
 
+    - name: Prepare release notes
+      shell: pwsh
+      run: |
+        $version = "${{ steps.version.outputs.VERSION }}"
+        $changelog = Get-Content changelog_notes.txt -Raw
+
+        $notes = @"
+        ## Installation
+
+        **Recommended:** Download ``QuoteBar-Setup-$version.exe`` and run the installer.
+
+        **Portable:** Download ``QuoteBar-Portable-$version.zip``, extract anywhere, and run ``QuoteBar.exe``.
+
+        ---
+
+        $changelog
+
+        ---
+
+        **Full Changelog:** https://github.com/crhistian-cornejo/QuoteBar/blob/main/CHANGELOG.md
+        "@
+
+        $notes | Out-File -FilePath release_notes.txt -Encoding utf8
+
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
         name: QuoteBar v${{ steps.version.outputs.VERSION }}
-        body_path: changelog_notes.txt
+        body_path: release_notes.txt
         files: |
-          QuoteBar-win-x64-v${{ steps.version.outputs.VERSION }}.zip
+          QuoteBar-Setup-v${{ steps.version.outputs.VERSION }}.exe
+          QuoteBar-Portable-v${{ steps.version.outputs.VERSION }}.zip
         draft: false
         prerelease: false
       env:
