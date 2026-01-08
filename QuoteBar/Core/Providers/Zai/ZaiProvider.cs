@@ -158,11 +158,11 @@ public static class ZaiUsageFetcher
 
     public static async Task<UsageSnapshot> FetchUsageAsync(string apiKey, CancellationToken cancellationToken = default)
     {
-        using var client = new HttpClient();
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        using var request = new HttpRequestMessage(HttpMethod.Get, QuotaApiUrl);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
-        var response = await client.GetAsync(QuotaApiUrl, cancellationToken);
+        var response = await Services.SharedHttpClient.Default.SendAsync(request, cancellationToken);
 
         if (!response.IsSuccessStatusCode)
         {

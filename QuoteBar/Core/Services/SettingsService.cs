@@ -4,9 +4,10 @@ using System.Text.Json;
 namespace QuoteBar.Core.Services;
 
 /// <summary>
-/// Settings service for persisting app configuration
+/// Settings service for persisting app configuration.
+/// Uses debouncing to reduce disk I/O when settings change rapidly.
 /// </summary>
-public class SettingsService
+public class SettingsService : IDisposable
 {
     private static readonly string SettingsPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -19,6 +20,11 @@ public class SettingsService
     public AppSettings Settings { get; private set; } = new();
 
     public event Action? SettingsChanged;
+
+    // Debounce settings save to reduce disk I/O
+    private Timer? _saveDebounceTimer;
+    private readonly object _saveLock = new();
+    private const int SaveDebounceMs = 1000; // Wait 1 second before saving
 
     private SettingsService()
     {
@@ -42,7 +48,45 @@ public class SettingsService
         }
     }
 
+    /// <summary>
+    /// Queue a save operation. Uses debouncing to batch rapid changes.
+    /// </summary>
     public void Save()
+    {
+        lock (_saveLock)
+        {
+            // Cancel any pending save
+            _saveDebounceTimer?.Dispose();
+
+            // Schedule save after debounce period
+            _saveDebounceTimer = new Timer(_ => PerformSave(), null, SaveDebounceMs, Timeout.Infinite);
+        }
+
+        // Fire settings changed immediately (UI updates shouldn't wait)
+        try
+        {
+            SettingsChanged?.Invoke();
+        }
+        catch (Exception eventEx)
+        {
+            DebugLogger.LogError("SettingsService", "SettingsChanged event error", eventEx);
+        }
+    }
+
+    /// <summary>
+    /// Force immediate save (use when app is closing)
+    /// </summary>
+    public void SaveImmediate()
+    {
+        lock (_saveLock)
+        {
+            _saveDebounceTimer?.Dispose();
+            _saveDebounceTimer = null;
+        }
+        PerformSave();
+    }
+
+    private void PerformSave()
     {
         try
         {
@@ -52,23 +96,23 @@ public class SettingsService
                 Directory.CreateDirectory(directory);
             }
 
-            var json = JsonSerializer.Serialize(Settings, new JsonSerializerOptions { WriteIndented = true });
+            // Use compact JSON (no indentation) to reduce file size
+            var json = JsonSerializer.Serialize(Settings, new JsonSerializerOptions { WriteIndented = false });
             File.WriteAllText(SettingsPath, json);
 
-            // Fire event in a safe manner
-            try
-            {
-                SettingsChanged?.Invoke();
-            }
-            catch (Exception eventEx)
-            {
-                DebugLogger.LogError("SettingsService", "SettingsChanged event error", eventEx);
-            }
+            DebugLogger.Log("SettingsService", "Settings saved to disk");
         }
         catch (Exception ex)
         {
             DebugLogger.LogError("SettingsService", "Save error", ex);
         }
+    }
+
+    public void Dispose()
+    {
+        // Save any pending changes before disposing
+        SaveImmediate();
+        _saveDebounceTimer?.Dispose();
     }
 }
 

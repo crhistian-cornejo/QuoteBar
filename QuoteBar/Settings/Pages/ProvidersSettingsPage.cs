@@ -489,67 +489,72 @@ public class ProvidersSettingsPage : ISettingsPage
             }
         };
         menuFlyout.Items.Add(refreshItem);
-        menuFlyout.Items.Add(new MenuFlyoutSeparator());
 
-        var disconnectItem = new MenuFlyoutItem
+        // For providers with configurable credentials (API keys, cookies), show "Change credentials" option
+        var providerIdLower = providerId.ToLower();
+        if (providerIdLower == "zai" || providerIdLower == "minimax")
         {
-            Text = "Disconnect",
-            Icon = new FontIcon { Glyph = "\uE7E8" }
-        };
-        AutomationProperties.SetName(disconnectItem, $"Disconnect {name}");
-        disconnectItem.Click += async (s, e) =>
-        {
-            DebugLogger.Log("ProvidersSettingsPage", $"Disconnect clicked for {providerId}, _content={_content != null}, XamlRoot={_content?.XamlRoot != null}");
+            menuFlyout.Items.Add(new MenuFlyoutSeparator());
 
-            if (_content?.XamlRoot == null)
+            var configureItem = new MenuFlyoutItem
             {
-                DebugLogger.Log("ProvidersSettingsPage", $"Disconnect aborted: XamlRoot is null for {providerId}");
-                // Try to get XamlRoot from the menu item itself
-                var xamlRoot = (s as FrameworkElement)?.XamlRoot;
-                if (xamlRoot == null)
-                {
-                    DebugLogger.Log("ProvidersSettingsPage", $"Could not find any XamlRoot for disconnect dialog");
-                    return;
-                }
+                Text = providerIdLower == "zai" ? "Change API Key" : "Change Cookie",
+                Icon = new FontIcon { Glyph = "\uE70F" } // Edit icon
+            };
+            AutomationProperties.SetName(configureItem, $"Configure {name}");
+            configureItem.Click += async (s, e) =>
+            {
+                // Try to get XamlRoot from the sender if _content is null
+                var xamlRoot = _content?.XamlRoot ?? (s as FrameworkElement)?.XamlRoot;
+                if (providerIdLower == "zai")
+                    await ShowZaiConnectDialogAsync(xamlRoot);
+                else if (providerIdLower == "minimax")
+                    await ShowMiniMaxConnectDialogAsync(xamlRoot);
+            };
+            menuFlyout.Items.Add(configureItem);
+        }
 
-                var fallbackDialog = new ContentDialog
+        // Only show "Clear credentials" for providers where QuoteBar stores its own tokens
+        // CLI-based providers (claude, codex, gemini, antigravity) don't have this option
+        // because their credentials belong to the CLI tools, not QuoteBar
+        if (HasClearableCredentials(providerId))
+        {
+            // Add separator only if we haven't already added one for configure
+            if (providerIdLower != "zai" && providerIdLower != "minimax")
+            {
+                menuFlyout.Items.Add(new MenuFlyoutSeparator());
+            }
+
+            var clearCredentialsItem = new MenuFlyoutItem
+            {
+                Text = "Clear stored credentials",
+                Icon = new FontIcon { Glyph = "\uE74D" } // Delete icon
+            };
+            AutomationProperties.SetName(clearCredentialsItem, $"Clear credentials for {name}");
+            clearCredentialsItem.Click += async (s, e) =>
+            {
+                var xamlRoot = _content?.XamlRoot ?? (s as FrameworkElement)?.XamlRoot;
+                if (xamlRoot == null) return;
+
+                var confirmDialog = new ContentDialog
                 {
-                    Title = $"Disconnect {name}?",
-                    Content = $"This will clear stored credentials for {name}.",
-                    PrimaryButtonText = "Disconnect",
+                    Title = $"Clear {name} credentials?",
+                    Content = $"This will remove the stored credentials for {name} from QuoteBar.\nYou can reconnect later by clicking 'Connect'.",
+                    PrimaryButtonText = "Clear",
                     CloseButtonText = "Cancel",
                     DefaultButton = ContentDialogButton.Close,
                     XamlRoot = xamlRoot
                 };
 
-                var fallbackResult = await fallbackDialog.ShowAsync();
-                if (fallbackResult == ContentDialogResult.Primary)
+                var result = await confirmDialog.ShowAsync();
+                if (result == ContentDialogResult.Primary)
                 {
-                    DisconnectProvider(providerId);
+                    ClearProviderCredentials(providerId);
                     RequestRefresh?.Invoke();
                 }
-                return;
-            }
-
-            var confirmDialog = new ContentDialog
-            {
-                Title = $"Disconnect {name}?",
-                Content = $"This will clear stored credentials for {name}.",
-                PrimaryButtonText = "Disconnect",
-                CloseButtonText = "Cancel",
-                DefaultButton = ContentDialogButton.Close,
-                XamlRoot = _content.XamlRoot
             };
-
-            var result = await confirmDialog.ShowAsync();
-            if (result == ContentDialogResult.Primary)
-            {
-                DebugLogger.Log("ProvidersSettingsPage", $"User confirmed disconnect for {providerId}");
-                DisconnectProvider(providerId);
-                RequestRefresh?.Invoke();
-            }
-        };
-        menuFlyout.Items.Add(disconnectItem);
+            menuFlyout.Items.Add(clearCredentialsItem);
+        }
 
         var button = new Button
         {
@@ -574,13 +579,21 @@ public class ProvidersSettingsPage : ISettingsPage
         };
         AutomationProperties.SetName(button, $"Connect {name}");
         AutomationProperties.SetHelpText(button, $"Set up connection to {name} provider");
-        button.Click += async (s, e) => await ShowConnectDialogAsync(name, providerId);
+        button.Click += async (s, e) =>
+        {
+            // Get XamlRoot from the button itself (more reliable than from _content)
+            var xamlRoot = (s as FrameworkElement)?.XamlRoot ?? _content?.XamlRoot;
+            await ShowConnectDialogAsync(name, providerId, xamlRoot);
+        };
         return button;
     }
 
-    private async Task ShowConnectDialogAsync(string name, string providerId)
+    private async Task ShowConnectDialogAsync(string name, string providerId, XamlRoot? xamlRoot = null)
     {
         DebugLogger.Log("ProvidersSettingsPage", $"ShowConnectDialogAsync called for {providerId}");
+
+        // Resolve XamlRoot
+        var resolvedXamlRoot = xamlRoot ?? _content?.XamlRoot;
 
         // Special handling for OAuth providers
         if (providerId.ToLower() == "copilot")
@@ -606,16 +619,16 @@ public class ProvidersSettingsPage : ISettingsPage
         // Special handling for cookie/token-based providers
         if (providerId.ToLower() == "minimax")
         {
-            await ShowMiniMaxConnectDialogAsync();
+            await ShowMiniMaxConnectDialogAsync(resolvedXamlRoot);
             return;
         }
         if (providerId.ToLower() == "zai")
         {
-            await ShowZaiConnectDialogAsync();
+            await ShowZaiConnectDialogAsync(resolvedXamlRoot);
             return;
         }
 
-        if (_content?.XamlRoot == null) return;
+        if (resolvedXamlRoot == null) return;
 
         string instructions = providerId.ToLower() switch
         {
@@ -632,7 +645,7 @@ public class ProvidersSettingsPage : ISettingsPage
             Content = new TextBlock { Text = instructions, TextWrapping = TextWrapping.Wrap, MaxWidth = 400 },
             PrimaryButtonText = "Retry Detection",
             CloseButtonText = "Close",
-            XamlRoot = _content.XamlRoot
+            XamlRoot = resolvedXamlRoot
         };
 
         var result = await dialog.ShowAsync();
@@ -724,12 +737,14 @@ public class ProvidersSettingsPage : ISettingsPage
         }
     }
 
-    private async Task ShowMiniMaxConnectDialogAsync()
+    private async Task ShowMiniMaxConnectDialogAsync(XamlRoot? overrideXamlRoot = null)
     {
         DebugLogger.Log("ProvidersSettingsPage", "ShowMiniMaxConnectDialogAsync called");
-        if (_content?.XamlRoot == null)
+
+        var xamlRoot = overrideXamlRoot ?? _content?.XamlRoot;
+        if (xamlRoot == null)
         {
-            DebugLogger.Log("ProvidersSettingsPage", "ShowMiniMaxConnectDialogAsync: _content or XamlRoot is null, aborting");
+            DebugLogger.Log("ProvidersSettingsPage", "ShowMiniMaxConnectDialogAsync: No XamlRoot available, aborting");
             return;
         }
 
@@ -737,21 +752,33 @@ public class ProvidersSettingsPage : ISettingsPage
         {
             DebugLogger.Log("ProvidersSettingsPage", "ShowMiniMaxConnectDialogAsync: Creating dialog content");
 
+            // Check if already configured
+            var existingCookie = MiniMaxSettingsReader.GetCookieHeader();
+            var hasExisting = !string.IsNullOrEmpty(existingCookie);
+            var maskedCookie = hasExisting && existingCookie!.Length > 20
+                ? $"{existingCookie.Substring(0, 10)}...({existingCookie.Length} chars)"
+                : (hasExisting ? "****" : null);
+
             // Create dialog content with input field
             var contentStack = new StackPanel { Spacing = 12, MinWidth = 400 };
 
+            var instructionText = hasExisting
+                ? $"Current cookie: {maskedCookie}\n\nTo update your MiniMax cookie:\n1. Go to platform.minimax.io and log in\n2. Open DevTools (F12) → Network tab\n3. Make any request and copy the 'Cookie' header\n4. Paste it below"
+                : "To connect MiniMax:\n\n1. Go to platform.minimax.io and log in\n2. Open DevTools (F12) → Network tab\n3. Make any request and copy the 'Cookie' header\n4. Paste it below";
+
             contentStack.Children.Add(new TextBlock
             {
-                Text = "To connect MiniMax:\n\n1. Go to platform.minimax.io and log in\n2. Open DevTools (F12) → Network tab\n3. Make any request and copy the 'Cookie' header\n4. Paste it below",
+                Text = instructionText,
                 TextWrapping = TextWrapping.Wrap
             });
 
             var inputBox = new TextBox
             {
-                PlaceholderText = "Paste your MiniMax cookie header here...",
+                PlaceholderText = hasExisting ? "Enter new cookie to replace current..." : "Paste your MiniMax cookie header here...",
                 AcceptsReturn = false,
                 TextWrapping = TextWrapping.NoWrap,
-                Height = 32
+                Height = 40,
+                MinWidth = 350
             };
             contentStack.Children.Add(inputBox);
 
@@ -790,7 +817,7 @@ public class ProvidersSettingsPage : ISettingsPage
                 PrimaryButtonText = "Save",
                 SecondaryButtonText = "Open MiniMax",
                 CloseButtonText = "Cancel",
-                XamlRoot = _content.XamlRoot
+                XamlRoot = xamlRoot
             };
 
             dialog.SecondaryButtonClick += (s, e) =>
@@ -825,30 +852,44 @@ public class ProvidersSettingsPage : ISettingsPage
         }
     }
 
-    private async Task ShowZaiConnectDialogAsync()
+    private async Task ShowZaiConnectDialogAsync(XamlRoot? overrideXamlRoot = null)
     {
         DebugLogger.Log("ProvidersSettingsPage", "ShowZaiConnectDialogAsync called");
-        if (_content?.XamlRoot == null)
+
+        var xamlRoot = overrideXamlRoot ?? _content?.XamlRoot;
+        if (xamlRoot == null)
         {
-            DebugLogger.Log("ProvidersSettingsPage", "ShowZaiConnectDialogAsync: _content or XamlRoot is null, aborting");
+            DebugLogger.Log("ProvidersSettingsPage", "ShowZaiConnectDialogAsync: No XamlRoot available, aborting");
             return;
         }
+
+        // Check if already configured
+        var existingToken = ZaiSettingsReader.GetApiToken();
+        var hasExisting = !string.IsNullOrEmpty(existingToken);
+        var maskedToken = hasExisting && existingToken!.Length > 8
+            ? $"{existingToken.Substring(0, 4)}...{existingToken.Substring(existingToken.Length - 4)}"
+            : (hasExisting ? "****" : null);
 
         // Create dialog content with input field
         var contentStack = new StackPanel { Spacing = 12, MinWidth = 400 };
 
+        var instructionText = hasExisting
+            ? $"Current API key: {maskedToken}\n\nTo change your z.ai API key:\n1. Go to z.ai/manage-apikey/subscription\n2. Copy your new API token\n3. Paste it below"
+            : "To connect z.ai:\n\n1. Go to z.ai/manage-apikey/subscription\n2. Copy your API token\n3. Paste it below";
+
         contentStack.Children.Add(new TextBlock
         {
-            Text = "To connect z.ai:\n\n1. Go to z.ai/manage-apikey/subscription\n2. Copy your API token\n3. Paste it below",
+            Text = instructionText,
             TextWrapping = TextWrapping.Wrap
         });
 
         var inputBox = new TextBox
         {
-            PlaceholderText = "Paste your z.ai API token here...",
+            PlaceholderText = hasExisting ? "Enter new API token to replace current..." : "Paste your z.ai API token here...",
             AcceptsReturn = false,
             TextWrapping = TextWrapping.NoWrap,
-            Height = 32
+            Height = 40,
+            MinWidth = 350
         };
         contentStack.Children.Add(inputBox);
 
@@ -885,7 +926,7 @@ public class ProvidersSettingsPage : ISettingsPage
             PrimaryButtonText = "Save",
             SecondaryButtonText = "Get Token",
             CloseButtonText = "Cancel",
-            XamlRoot = _content.XamlRoot
+            XamlRoot = xamlRoot
         };
 
         dialog.SecondaryButtonClick += (s, e) =>
@@ -912,7 +953,54 @@ public class ProvidersSettingsPage : ISettingsPage
         }
     }
 
-    private void DisconnectProvider(string providerId)
+    /// <summary>
+    /// Disable a provider - only disables tracking, does NOT delete external credentials.
+    /// This follows CodexBar's design: users control their own credentials through native tools.
+    /// For providers with QuoteBar-specific tokens (z.ai, minimax), we offer a separate "Clear credentials" option.
+    /// </summary>
+    private void DisableProvider(string providerId)
+    {
+        try
+        {
+            // Just disable the provider in settings - don't delete any credentials
+            _settings.Settings.SetProviderEnabled(providerId, false);
+            _settings.Save();
+
+            // Clear caches so the UI updates immediately
+            switch (providerId.ToLower())
+            {
+                case "claude":
+                    ClaudeOAuthCredentialsStore.InvalidateCache();
+                    break;
+                case "gemini":
+                    GeminiOAuthCredentialsStore.InvalidateCache();
+                    break;
+                case "copilot":
+                    CopilotOAuthCredentialsStore.InvalidateCache();
+                    break;
+                case "augment":
+                    AugmentSessionStore.InvalidateCache();
+                    break;
+            }
+
+            // Clear the usage store snapshot so the UI shows as disabled
+            var usageStore = (Application.Current as QuoteBar.App)?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+            usageStore?.ClearSnapshot(providerId);
+
+            DebugLogger.Log("ProvidersSettingsPage", $"Disabled provider {providerId} (credentials preserved)");
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("ProvidersSettingsPage", $"DisableProvider error ({providerId})", ex);
+        }
+    }
+
+    /// <summary>
+    /// Clear QuoteBar-specific credentials for a provider.
+    /// Only used for providers where QuoteBar stores its own tokens (z.ai API token, MiniMax cookie, etc.)
+    /// Does NOT touch external CLI credentials (Claude, Codex, Gemini, etc.)
+    /// </summary>
+    private void ClearProviderCredentials(string providerId)
     {
         try
         {
@@ -920,45 +1008,80 @@ public class ProvidersSettingsPage : ISettingsPage
 
             switch (providerId.ToLower())
             {
+                case "zai":
+                    success = ZaiSettingsReader.DeleteApiToken();
+                    DebugLogger.Log("ProvidersSettingsPage", $"z.ai: cleared API token, success={success}");
+                    break;
+
+                case "minimax":
+                    success = MiniMaxSettingsReader.DeleteCookieHeader();
+                    DebugLogger.Log("ProvidersSettingsPage", $"MiniMax: cleared cookie, success={success}");
+                    break;
+
+                case "copilot":
+                    // Only delete QuoteBar's own token, not GitHub CLI credentials
+                    var copilotTokenPath = System.IO.Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "QuoteBar", "copilot_token.json");
+                    if (System.IO.File.Exists(copilotTokenPath))
+                    {
+                        System.IO.File.Delete(copilotTokenPath);
+                        DebugLogger.Log("ProvidersSettingsPage", "Copilot: cleared QuoteBar OAuth token");
+                    }
+                    CopilotOAuthCredentialsStore.InvalidateCache();
+                    break;
+
                 case "cursor":
                     CursorSessionStore.ClearSession();
+                    DebugLogger.Log("ProvidersSettingsPage", "Cursor: cleared session");
                     break;
-                case "claude":
-                    var claudePath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", "credentials.json");
-                    if (System.IO.File.Exists(claudePath)) System.IO.File.Delete(claudePath);
+
+                case "droid":
+                    DroidSessionStore.ClearSession();
+                    DebugLogger.Log("ProvidersSettingsPage", "Droid: cleared session");
                     break;
-                case "gemini":
-                    var geminiPath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".gemini", "credentials.json");
-                    if (System.IO.File.Exists(geminiPath)) System.IO.File.Delete(geminiPath);
-                    break;
-                case "zai":
-                    ZaiSettingsReader.DeleteApiToken();
-                    break;
-                case "minimax":
-                    MiniMaxSettingsReader.DeleteCookieHeader();
-                    break;
+
                 case "augment":
                     success = AugmentCredentialStore.ClearCredentials();
                     AugmentSessionStore.InvalidateCache();
-                    DebugLogger.Log("ProvidersSettingsPage", $"Augment disconnect: ClearCredentials={success}, HasCredentials={AugmentCredentialStore.HasCredentials()}");
+                    DebugLogger.Log("ProvidersSettingsPage", $"Augment: cleared credentials, success={success}");
                     break;
-                case "antigravity":
-                    // Antigravity is auto-detected from running process, no stored credentials
-                    // Just clear the cache so the UI shows "Not configured"
-                    DebugLogger.Log("ProvidersSettingsPage", "Antigravity disconnect: clearing cache only (auto-detect provider)");
-                    break;
+
+                default:
+                    // For CLI-based providers (claude, codex, gemini), we don't clear external credentials
+                    DebugLogger.Log("ProvidersSettingsPage", $"{providerId}: no QuoteBar-specific credentials to clear");
+                    return;
             }
 
-            // Clear the usage store snapshot so the UI shows "Not configured" immediately
+            // Clear the usage store snapshot
             var usageStore = (Application.Current as QuoteBar.App)?.Services?.GetService(typeof(UsageStore)) as UsageStore;
             usageStore?.ClearSnapshot(providerId);
 
-            DebugLogger.Log("ProvidersSettingsPage", $"Disconnected {providerId}, success={success}");
+            DebugLogger.Log("ProvidersSettingsPage", $"Cleared credentials for {providerId}");
         }
         catch (Exception ex)
         {
-            DebugLogger.LogError("ProvidersSettingsPage", $"DisconnectProvider error ({providerId})", ex);
+            DebugLogger.LogError("ProvidersSettingsPage", $"ClearProviderCredentials error ({providerId})", ex);
         }
+    }
+
+    /// <summary>
+    /// Check if a provider has QuoteBar-specific credentials that can be cleared
+    /// </summary>
+    private bool HasClearableCredentials(string providerId)
+    {
+        return providerId.ToLower() switch
+        {
+            "zai" => ZaiSettingsReader.HasApiToken(),
+            "minimax" => MiniMaxSettingsReader.HasCookieHeader(),
+            "copilot" => System.IO.File.Exists(System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "QuoteBar", "copilot_token.json")),
+            "cursor" => CursorSessionStore.HasSession(),
+            "droid" => DroidSessionStore.HasSession(),
+            "augment" => AugmentCredentialStore.HasCredentials(),
+            _ => false // CLI-based providers don't have clearable credentials
+        };
     }
 
     private (bool isConnected, string status) GetProviderStatusFast(string providerId)
@@ -980,32 +1103,64 @@ public class ProvidersSettingsPage : ISettingsPage
                     var claudeCredentials = ClaudeOAuthCredentialsStore.TryLoad();
                     if (claudeCredentials != null && !claudeCredentials.IsExpired)
                         return (true, "OAuth connected");
+                    // Also check if CLI credentials file exists
+                    var claudeCredPath = System.IO.Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                        ".claude", "credentials.json");
+                    if (System.IO.File.Exists(claudeCredPath))
+                        return (true, "CLI configured");
                     break;
+
+                case "codex":
+                    // Check for Codex CLI credentials
+                    var codexPaths = new[]
+                    {
+                        System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex", "credentials.json"),
+                        System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "codex", "credentials.json")
+                    };
+                    if (codexPaths.Any(System.IO.File.Exists))
+                        return (true, "CLI configured");
+                    break;
+
                 case "cursor":
                     if (CursorSessionStore.HasSession())
                         return (true, "Session stored");
                     break;
+
                 case "gemini":
                     if (GeminiOAuthCredentialsStore.HasValidCredentials())
                         return (true, "OAuth connected");
                     break;
+
                 case "copilot":
                     var copilotCredentials = CopilotOAuthCredentialsStore.TryLoad();
                     if (copilotCredentials != null && !copilotCredentials.IsExpired)
                         return (true, "GitHub OAuth connected");
                     break;
+
+                case "droid":
+                    if (DroidSessionStore.HasSession())
+                        return (true, "Session stored");
+                    break;
+
                 case "zai":
                     if (ZaiSettingsReader.HasApiToken())
                         return (true, "API token configured");
                     break;
+
                 case "minimax":
                     if (MiniMaxSettingsReader.HasCookieHeader())
                         return (true, "Cookie configured");
                     break;
+
                 case "augment":
-                    // Only cookies work for Augment web API - CLI session doesn't work
                     if (AugmentCredentialStore.HasCredentials())
                         return (true, "Session stored");
+                    break;
+
+                case "antigravity":
+                    // Antigravity is auto-detected - check if the process is running
+                    // This is a fast check, actual detection happens in GetProviderStatusWithCLI
                     break;
             }
 

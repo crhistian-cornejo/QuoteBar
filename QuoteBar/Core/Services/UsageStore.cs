@@ -9,8 +9,9 @@ namespace QuoteBar.Core.Services;
 /// <summary>
 /// Central store for managing provider usage data
 /// </summary>
-public partial class UsageStore : ObservableObject
+public partial class UsageStore : ObservableObject, IDisposable
 {
+    private bool _disposed;
     [ObservableProperty]
     private string? _currentProviderId;
     
@@ -243,6 +244,26 @@ public partial class UsageStore : ObservableObject
     
     public void Dispose()
     {
-        _refreshTimer?.Dispose();
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+
+        if (disposing)
+        {
+            // Unsubscribe from events to prevent memory leaks
+            _settings.SettingsChanged -= OnSettingsChanged;
+
+            // Dispose timer
+            _refreshTimer?.Dispose();
+            _refreshTimer = null;
+
+            DebugLogger.Log("UsageStore", "Disposed");
+        }
+
+        _disposed = true;
     }
 }

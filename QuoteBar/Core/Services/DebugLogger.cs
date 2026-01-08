@@ -4,14 +4,18 @@ using System.IO;
 namespace QuoteBar.Core.Services;
 
 /// <summary>
-/// Centralized debug logging service for NativeBar
-/// Only logs in DEBUG builds or when explicitly enabled
+/// Centralized debug logging service for QuoteBar.
+/// Uses buffered writes to minimize disk I/O impact.
+/// Only logs in DEBUG builds or when explicitly enabled.
 /// </summary>
 public static class DebugLogger
 {
     private static readonly object _lock = new();
     private static string? _logFilePath;
     private static bool _isEnabled;
+    private static StreamWriter? _logWriter;
+    private static Timer? _flushTimer;
+    private const int FlushIntervalMs = 5000; // Flush every 5 seconds
 
     /// <summary>
     /// Initialize the logger with optional custom path
@@ -34,6 +38,19 @@ public static class DebugLogger
                 }
                 catch { }
             }
+
+            // Open buffered stream writer
+            try
+            {
+                _logWriter = new StreamWriter(_logFilePath, append: true)
+                {
+                    AutoFlush = false // Manual flush for performance
+                };
+
+                // Periodic flush timer
+                _flushTimer = new Timer(_ => Flush(), null, FlushIntervalMs, FlushIntervalMs);
+            }
+            catch { }
 
             Log("DebugLogger", "Logger initialized");
         }
@@ -65,21 +82,29 @@ public static class DebugLogger
     }
 
     /// <summary>
-    /// Log a message with category
+    /// Log a message with category (buffered write)
     /// </summary>
     public static void Log(string category, string message)
     {
-        if (!_isEnabled || string.IsNullOrEmpty(_logFilePath))
+        if (!_isEnabled)
             return;
 
         try
         {
             var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
-            var logLine = $"[{timestamp}] [{category}] {message}\n";
+            var logLine = $"[{timestamp}] [{category}] {message}";
 
             lock (_lock)
             {
-                File.AppendAllText(_logFilePath, logLine);
+                if (_logWriter != null)
+                {
+                    _logWriter.WriteLine(logLine);
+                }
+                else if (!string.IsNullOrEmpty(_logFilePath))
+                {
+                    // Fallback to direct write if stream not available
+                    File.AppendAllText(_logFilePath, logLine + "\n");
+                }
             }
 
             // Also output to debugger
@@ -101,6 +126,9 @@ public static class DebugLogger
             : $"ERROR: {message}";
 
         Log(category, fullMessage);
+
+        // Immediately flush errors to disk
+        Flush();
     }
 
     /// <summary>
@@ -113,6 +141,21 @@ public static class DebugLogger
     }
 
     /// <summary>
+    /// Flush buffered logs to disk
+    /// </summary>
+    public static void Flush()
+    {
+        lock (_lock)
+        {
+            try
+            {
+                _logWriter?.Flush();
+            }
+            catch { }
+        }
+    }
+
+    /// <summary>
     /// Enable or disable logging at runtime
     /// </summary>
     public static void SetEnabled(bool enabled)
@@ -120,7 +163,7 @@ public static class DebugLogger
         _isEnabled = enabled;
         if (enabled && string.IsNullOrEmpty(_logFilePath))
         {
-            _logFilePath = GetDefaultLogPath();
+            Initialize(enabled);
         }
     }
 
@@ -128,6 +171,26 @@ public static class DebugLogger
     /// Get current log file path
     /// </summary>
     public static string? GetLogFilePath() => _logFilePath;
+
+    /// <summary>
+    /// Shutdown the logger (call on app exit)
+    /// </summary>
+    public static void Shutdown()
+    {
+        lock (_lock)
+        {
+            _flushTimer?.Dispose();
+            _flushTimer = null;
+
+            try
+            {
+                _logWriter?.Flush();
+                _logWriter?.Dispose();
+            }
+            catch { }
+            _logWriter = null;
+        }
+    }
 
     /// <summary>
     /// Clean up old log files (keep last N days)

@@ -142,7 +142,7 @@ public partial class App : Application
             // Initialize Provider Status Polling (polls statuspage.io for incidents)
             try
             {
-                ProviderStatusService.Instance.StartPolling(intervalSeconds: 300); // Every 5 minutes
+                ProviderStatusService.Instance.StartPolling(intervalSeconds: 900); // Every 15 minutes (saves energy)
                 DebugLogger.Log("App", "Provider status polling started");
             }
             catch (Exception ex)
@@ -215,11 +215,31 @@ public partial class App : Application
     private void OnExitClick()
     {
         DebugLogger.Log("App", "Exiting...");
+
+        // Stop services and polling
         ProviderStatusService.Instance.StopPolling();
+        UpdateService.Instance.StopPeriodicChecks();
+
+        // Unsubscribe from events
+        if (_usageStore != null)
+        {
+            _usageStore.AllProvidersRefreshed -= OnUsageDataRefreshed;
+        }
+        SettingsService.Instance.SettingsChanged -= OnSettingsChanged;
+
+        // Dispose services in reverse order of creation
         _hotkeyService?.Dispose();
         _trayIconsService?.Dispose();
         _taskbarOverlay?.Dispose();
         _notifyIcon?.Dispose();
+        _usageStore?.Dispose();
+
+        // Save settings immediately before exit
+        SettingsService.Instance.SaveImmediate();
+
+        // Shutdown logger (flushes buffered logs)
+        DebugLogger.Shutdown();
+
         Application.Current.Exit();
     }
 
@@ -769,14 +789,24 @@ public class NotifyIconHelper : IDisposable
             {
                 using var originalBitmap = new System.Drawing.Bitmap(logoPath);
                 // Use 16x16 for standard system tray icon size
-                using var resizedBitmap = new System.Drawing.Bitmap(16, 16);
-                using (var g = System.Drawing.Graphics.FromImage(resizedBitmap))
+                var resizedBitmap = new System.Drawing.Bitmap(16, 16);
+                try
                 {
-                    g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-                    g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-                    g.DrawImage(originalBitmap, 0, 0, 16, 16);
+                    using (var g = System.Drawing.Graphics.FromImage(resizedBitmap))
+                    {
+                        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                        g.DrawImage(originalBitmap, 0, 0, 16, 16);
+                    }
+                    var handle = resizedBitmap.GetHicon();
+                    // Note: After GetHicon(), the caller owns the handle and must call DestroyIcon
+                    // The bitmap can be disposed but the icon handle remains valid
+                    return handle;
                 }
-                return resizedBitmap.GetHicon();
+                finally
+                {
+                    resizedBitmap.Dispose();
+                }
             }
         }
         catch (Exception ex)

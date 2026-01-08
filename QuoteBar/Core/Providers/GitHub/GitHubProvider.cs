@@ -45,15 +45,15 @@ public class GitHubOAuthStrategy : IProviderFetchStrategy
             };
         }
         
-        using var client = new HttpClient();
-        client.DefaultRequestHeaders.Add("Authorization", $"token {token}");
-        client.DefaultRequestHeaders.Add("Accept", "application/vnd.github.v3+json");
-        client.DefaultRequestHeaders.Add("User-Agent", "QuoteBar");
-        
         try
         {
             // GitHub Copilot usage endpoint
-            var response = await client.GetAsync("https://api.github.com/copilot/usage", cancellationToken);
+            using var request = new HttpRequestMessage(HttpMethod.Get, "https://api.github.com/copilot/usage");
+            request.Headers.Add("Authorization", $"token {token}");
+            request.Headers.Add("Accept", "application/vnd.github.v3+json");
+            request.Headers.Add("User-Agent", "QuoteBar");
+
+            var response = await Services.SharedHttpClient.Default.SendAsync(request, cancellationToken);
             
             if (!response.IsSuccessStatusCode)
             {
