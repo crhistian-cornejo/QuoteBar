@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Media;
 using NativeBar.WinUI.Core.Providers;
 using NativeBar.WinUI.Core.Services;
 using NativeBar.WinUI.Settings.Controls;
+using NativeBar.WinUI.Settings.Helpers;
 
 namespace NativeBar.WinUI.Settings.Pages;
 
@@ -137,6 +138,7 @@ public class ProviderOrderSettingsPage : ISettingsPage
 
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
@@ -146,9 +148,25 @@ public class ProviderOrderSettingsPage : ISettingsPage
             Glyph = "\uE712", // Grip icon
             FontSize = 16,
             Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
-            Margin = new Thickness(0, 0, 12, 0)
+            Margin = new Thickness(0, 0, 12, 0),
+            VerticalAlignment = VerticalAlignment.Center
         };
         Grid.SetColumn(dragIcon, 0);
+
+        // Provider Icon
+        var colorHex = GetProviderColor(provider.Id);
+        var iconElement = ProviderIconHelper.CreateProviderImage(provider.Id, size: 16, forIconWithBackground: true);
+        var iconBorder = new Border
+        {
+            Width = 24,
+            Height = 24,
+            CornerRadius = new CornerRadius(4),
+            Background = new SolidColorBrush(ProviderIconHelper.ParseColor(colorHex)),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 12, 0),
+            Child = iconElement ?? (FrameworkElement)ProviderIconHelper.CreateProviderInitial(provider.DisplayName, 10)
+        };
+        Grid.SetColumn(iconBorder, 1);
 
         // Provider name
         var nameText = new TextBlock
@@ -159,7 +177,7 @@ public class ProviderOrderSettingsPage : ISettingsPage
             Foreground = new SolidColorBrush(_theme.TextColor),
             VerticalAlignment = VerticalAlignment.Center
         };
-        Grid.SetColumn(nameText, 1);
+        Grid.SetColumn(nameText, 2);
 
         // Move buttons container
         var buttonPanel = new StackPanel
@@ -191,9 +209,10 @@ public class ProviderOrderSettingsPage : ISettingsPage
 
         buttonPanel.Children.Add(moveUpButton);
         buttonPanel.Children.Add(moveDownButton);
-        Grid.SetColumn(buttonPanel, 2);
+        Grid.SetColumn(buttonPanel, 3);
 
         grid.Children.Add(dragIcon);
+        grid.Children.Add(iconBorder);
         grid.Children.Add(nameText);
         grid.Children.Add(buttonPanel);
 
@@ -228,5 +247,23 @@ public class ProviderOrderSettingsPage : ISettingsPage
     public void OnThemeChanged()
     {
         _content = CreateContent();
+    }
+
+    private string GetProviderColor(string providerId)
+    {
+        return providerId.ToLower() switch
+        {
+            "antigravity" => "#FF6B6B",
+            "augment" => "#3C3C3C",
+            "claude" => "#D97757",
+            "codex" => "#7C3AED",
+            "copilot" => "#24292F",
+            "cursor" => "#007AFF",
+            "droid" => "#EE6018",
+            "gemini" => "#4285F4",
+            "minimax" => "#E2167E",
+            "zai" => "#E85A6A",
+            _ => "#808080"
+        };
     }
 }

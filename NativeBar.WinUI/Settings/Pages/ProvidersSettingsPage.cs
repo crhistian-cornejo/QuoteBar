@@ -499,7 +499,37 @@ public class ProvidersSettingsPage : ISettingsPage
         AutomationProperties.SetName(disconnectItem, $"Disconnect {name}");
         disconnectItem.Click += async (s, e) =>
         {
-            if (_content?.XamlRoot == null) return;
+            DebugLogger.Log("ProvidersSettingsPage", $"Disconnect clicked for {providerId}, _content={_content != null}, XamlRoot={_content?.XamlRoot != null}");
+
+            if (_content?.XamlRoot == null)
+            {
+                DebugLogger.Log("ProvidersSettingsPage", $"Disconnect aborted: XamlRoot is null for {providerId}");
+                // Try to get XamlRoot from the menu item itself
+                var xamlRoot = (s as FrameworkElement)?.XamlRoot;
+                if (xamlRoot == null)
+                {
+                    DebugLogger.Log("ProvidersSettingsPage", $"Could not find any XamlRoot for disconnect dialog");
+                    return;
+                }
+
+                var fallbackDialog = new ContentDialog
+                {
+                    Title = $"Disconnect {name}?",
+                    Content = $"This will clear stored credentials for {name}.",
+                    PrimaryButtonText = "Disconnect",
+                    CloseButtonText = "Cancel",
+                    DefaultButton = ContentDialogButton.Close,
+                    XamlRoot = xamlRoot
+                };
+
+                var fallbackResult = await fallbackDialog.ShowAsync();
+                if (fallbackResult == ContentDialogResult.Primary)
+                {
+                    DisconnectProvider(providerId);
+                    RequestRefresh?.Invoke();
+                }
+                return;
+            }
 
             var confirmDialog = new ContentDialog
             {
@@ -514,6 +544,7 @@ public class ProvidersSettingsPage : ISettingsPage
             var result = await confirmDialog.ShowAsync();
             if (result == ContentDialogResult.Primary)
             {
+                DebugLogger.Log("ProvidersSettingsPage", $"User confirmed disconnect for {providerId}");
                 DisconnectProvider(providerId);
                 RequestRefresh?.Invoke();
             }
@@ -702,81 +733,95 @@ public class ProvidersSettingsPage : ISettingsPage
             return;
         }
 
-        // Create dialog content with input field
-        var contentStack = new StackPanel { Spacing = 12, MinWidth = 400 };
-
-        contentStack.Children.Add(new TextBlock
+        try
         {
-            Text = "To connect MiniMax:\n\n1. Go to platform.minimax.io and log in\n2. Open DevTools (F12) → Network tab\n3. Make any request and copy the 'Cookie' header\n4. Paste it below",
-            TextWrapping = TextWrapping.Wrap
-        });
+            DebugLogger.Log("ProvidersSettingsPage", "ShowMiniMaxConnectDialogAsync: Creating dialog content");
 
-        var inputBox = new TextBox
-        {
-            PlaceholderText = "Paste your MiniMax cookie header here...",
-            AcceptsReturn = false,
-            TextWrapping = TextWrapping.NoWrap,
-            Height = 32
-        };
-        contentStack.Children.Add(inputBox);
+            // Create dialog content with input field
+            var contentStack = new StackPanel { Spacing = 12, MinWidth = 400 };
 
-        // Paste from clipboard button
-        var pasteButton = new Button { Content = "Paste from Clipboard", Margin = new Thickness(0, 4, 0, 0) };
-        pasteButton.Click += async (s, e) =>
-        {
-            try
+            contentStack.Children.Add(new TextBlock
             {
-                var data = Clipboard.GetContent();
-                if (data.Contains(StandardDataFormats.Text))
+                Text = "To connect MiniMax:\n\n1. Go to platform.minimax.io and log in\n2. Open DevTools (F12) → Network tab\n3. Make any request and copy the 'Cookie' header\n4. Paste it below",
+                TextWrapping = TextWrapping.Wrap
+            });
+
+            var inputBox = new TextBox
+            {
+                PlaceholderText = "Paste your MiniMax cookie header here...",
+                AcceptsReturn = false,
+                TextWrapping = TextWrapping.NoWrap,
+                Height = 32
+            };
+            contentStack.Children.Add(inputBox);
+
+            // Paste from clipboard button
+            var pasteButton = new Button { Content = "Paste from Clipboard", Margin = new Thickness(0, 4, 0, 0) };
+            pasteButton.Click += async (s, e) =>
+            {
+                try
                 {
-                    var text = await data.GetTextAsync();
-                    if (!string.IsNullOrWhiteSpace(text))
-                        inputBox.Text = text.Trim();
+                    var data = Clipboard.GetContent();
+                    if (data.Contains(StandardDataFormats.Text))
+                    {
+                        var text = await data.GetTextAsync();
+                        if (!string.IsNullOrWhiteSpace(text))
+                            inputBox.Text = text.Trim();
+                    }
+                }
+                catch { }
+            };
+            contentStack.Children.Add(pasteButton);
+
+            contentStack.Children.Add(new TextBlock
+            {
+                Text = "Cookie is stored securely in Windows Credential Manager.",
+                FontSize = 11,
+                Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
+                Opacity = 0.7
+            });
+
+            DebugLogger.Log("ProvidersSettingsPage", "ShowMiniMaxConnectDialogAsync: Creating ContentDialog");
+
+            var dialog = new ContentDialog
+            {
+                Title = "Connect MiniMax",
+                Content = contentStack,
+                PrimaryButtonText = "Save",
+                SecondaryButtonText = "Open MiniMax",
+                CloseButtonText = "Cancel",
+                XamlRoot = _content.XamlRoot
+            };
+
+            dialog.SecondaryButtonClick += (s, e) =>
+            {
+                try { Process.Start(new ProcessStartInfo("https://platform.minimax.io/user-center/payment/coding-plan?cycle_type=3") { UseShellExecute = true }); }
+                catch { }
+                e.Cancel = true; // Don't close the dialog
+            };
+
+            DebugLogger.Log("ProvidersSettingsPage", "ShowMiniMaxConnectDialogAsync: About to call ShowAsync");
+            var result = await dialog.ShowAsync();
+            DebugLogger.Log("ProvidersSettingsPage", $"ShowMiniMaxConnectDialogAsync: ShowAsync returned {result}");
+
+            if (result == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(inputBox.Text))
+            {
+                var success = MiniMaxSettingsReader.StoreCookieHeader(inputBox.Text.Trim());
+                if (success)
+                {
+                    var usageStore = (Application.Current as NativeBar.WinUI.App)?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+                    if (usageStore != null)
+                    {
+                        try { await usageStore.RefreshAsync("minimax"); }
+                        catch { }
+                    }
+                    RequestRefresh?.Invoke();
                 }
             }
-            catch { }
-        };
-        contentStack.Children.Add(pasteButton);
-
-        contentStack.Children.Add(new TextBlock
+        }
+        catch (Exception ex)
         {
-            Text = "Cookie is stored securely in Windows Credential Manager.",
-            FontSize = 11,
-            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
-            Opacity = 0.7
-        });
-
-        var dialog = new ContentDialog
-        {
-            Title = "Connect MiniMax",
-            Content = contentStack,
-            PrimaryButtonText = "Save",
-            SecondaryButtonText = "Open MiniMax",
-            CloseButtonText = "Cancel",
-            XamlRoot = _content.XamlRoot
-        };
-
-        dialog.SecondaryButtonClick += (s, e) =>
-        {
-            try { Process.Start(new ProcessStartInfo("https://platform.minimax.io/user-center/payment/coding-plan?cycle_type=3") { UseShellExecute = true }); }
-            catch { }
-            e.Cancel = true; // Don't close the dialog
-        };
-
-        var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(inputBox.Text))
-        {
-            var success = MiniMaxSettingsReader.StoreCookieHeader(inputBox.Text.Trim());
-            if (success)
-            {
-                var usageStore = (Application.Current as NativeBar.WinUI.App)?.Services?.GetService(typeof(UsageStore)) as UsageStore;
-                if (usageStore != null)
-                {
-                    try { await usageStore.RefreshAsync("minimax"); }
-                    catch { }
-                }
-                RequestRefresh?.Invoke();
-            }
+            DebugLogger.LogError("ProvidersSettingsPage", "ShowMiniMaxConnectDialogAsync failed", ex);
         }
     }
 
@@ -871,6 +916,8 @@ public class ProvidersSettingsPage : ISettingsPage
     {
         try
         {
+            bool success = true;
+
             switch (providerId.ToLower())
             {
                 case "cursor":
@@ -891,11 +938,22 @@ public class ProvidersSettingsPage : ISettingsPage
                     MiniMaxSettingsReader.DeleteCookieHeader();
                     break;
                 case "augment":
-                    AugmentCredentialStore.ClearCredentials();
+                    success = AugmentCredentialStore.ClearCredentials();
                     AugmentSessionStore.InvalidateCache();
+                    DebugLogger.Log("ProvidersSettingsPage", $"Augment disconnect: ClearCredentials={success}, HasCredentials={AugmentCredentialStore.HasCredentials()}");
+                    break;
+                case "antigravity":
+                    // Antigravity is auto-detected from running process, no stored credentials
+                    // Just clear the cache so the UI shows "Not configured"
+                    DebugLogger.Log("ProvidersSettingsPage", "Antigravity disconnect: clearing cache only (auto-detect provider)");
                     break;
             }
-            DebugLogger.Log("ProvidersSettingsPage", $"Disconnected {providerId}");
+
+            // Clear the usage store snapshot so the UI shows "Not configured" immediately
+            var usageStore = (Application.Current as NativeBar.WinUI.App)?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+            usageStore?.ClearSnapshot(providerId);
+
+            DebugLogger.Log("ProvidersSettingsPage", $"Disconnected {providerId}, success={success}");
         }
         catch (Exception ex)
         {
@@ -951,8 +1009,7 @@ public class ProvidersSettingsPage : ISettingsPage
                     break;
             }
 
-            var needsCLICheck = providerId.ToLower() is "codex" or "claude" or "gemini" or "copilot" or "droid";
-            return (false, needsCLICheck ? "Checking..." : "Not configured");
+            return (false, "Not configured");
         }
         catch
         {
@@ -965,7 +1022,7 @@ public class ProvidersSettingsPage : ISettingsPage
         try
         {
             var (isConnected, status) = await Task.Run(() => GetProviderStatusWithCLI(providerId));
-            if (isConnected && _dispatcherQueue != null)
+            if (_dispatcherQueue != null)
             {
                 _dispatcherQueue.TryEnqueue(() =>
                 {
@@ -1054,8 +1111,7 @@ public class ProvidersSettingsPage : ISettingsPage
 
     private Border CreateMiniMaxProviderCard()
     {
-        // SIMPLIFIED VERSION to debug WinUI crash
-        // Using same pattern as CreateProviderCardWithAutoDetect
+        // Now using standard branded icon logic
         return CreateProviderCardWithAutoDetect("MiniMax", "minimax", "#E2167E");
     }
 

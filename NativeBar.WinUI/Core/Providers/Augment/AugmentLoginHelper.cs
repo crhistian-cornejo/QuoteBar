@@ -88,11 +88,14 @@ public static class AugmentLoginHelper
     /// <summary>
     /// Sign out from Augment (clear stored session)
     /// </summary>
-    public static void SignOut()
+    /// <returns>True if sign out was successful</returns>
+    public static bool SignOut()
     {
         Log("Signing out from Augment");
-        AugmentCredentialStore.ClearCredentials();
+        var result = AugmentCredentialStore.ClearCredentials();
         AugmentSessionStore.InvalidateCache();
+        Log($"Sign out result: {result}");
+        return result;
     }
 
     /// <summary>

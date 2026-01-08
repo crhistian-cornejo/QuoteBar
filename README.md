@@ -5,6 +5,11 @@
 ![.NET](https://img.shields.io/badge/.NET-9.0-purple.svg)
 ![Platform](https://img.shields.io/badge/Platform-WinUI%203-lightgrey.svg)
 
+![GitHub release](https://img.shields.io/github/v-release/crhistian-cornejo/QuoteBar?display_name=release)
+![GitHub stars](https://img.shields.io/github/stars/crhistian-cornejo/QuoteBar?style=social)
+![GitHub forks](https://img.shields.io/github/forks/crhistian-cornejo/QuoteBar?style=social)
+![GitHub issues](https://img.shields.io/github/issues/crhistian-cornejo/QuoteBar)
+
 Native Windows 11 application for monitoring AI provider usage. Track quotas, costs, and status across Claude, Codex, Cursor, Gemini, Copilot, Droid, z.ai, Antigravity, Augment, and MiniMax from the system tray.
 
 ![PopOver](docs/images/PopOver.png)
@@ -63,12 +68,7 @@ Enable/disable providers, configure authentication methods, and reorder them to 
 
 ### Quick Install
 
-[![GitHub release](https://img.shields.io/github/v-release/your-org/QuoteBar?display_name=release&style=flat-square)](https://github.com/your-org/QuoteBar/releases/latest)
-
-Download the latest release and run `QuoteBar.exe`.
-
-[![GitHub stars](https://img.shields.io/github/stars/your-org/QuoteBar?style=social)](https://github.com/your-org/QuoteBar/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/your-org/QuoteBar?style=social)](https://github.com/your-org/QuoteBar/network/members)
+[![GitHub release](https://img.shields.io/github/v-release/crhistian-cornejo/QuoteBar?display_name=release&style=flat-square)](https://github.com/crhistian-cornejo/QuoteBar/releases/latest)
 
 ### Development Build
 
@@ -179,18 +179,6 @@ API tokens are stored in Windows Credential Manager (encrypted).
 Inspired by [CodexBar](https://github.com/steipete/CodexBar) for macOS.
 
 ---
-
-## Badges
-
-![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
-![Windows](https://img.shields.io/badge/Windows-10%2B-informational?logo=windows)
-![.NET](https://img.shields.io/badge/.NET-9.0-purple.svg)
-![Platform](https://img.shields.io/badge/Platform-WinUI%203-lightgrey.svg)
-
-![GitHub release](https://img.shields.io/github/v-release/your-org/QuoteBar?display_name=release)
-![GitHub stars](https://img.shields.io/github/stars/your-org/QuoteBar?style=social)
-![GitHub forks](https://img.shields.io/github/forks/your-org/QuoteBar?style=social)
-![GitHub issues](https://img.shields.io/github/issues/your-org/QuoteBar)
 
 ## License
 

@@ -155,16 +155,27 @@ public static class AugmentCredentialStore
     /// <summary>
     /// Clear stored credentials
     /// </summary>
-    public static void ClearCredentials()
+    public static bool ClearCredentials()
     {
         try
         {
-            SecureCredentialStore.DeleteCredential(CredentialKeys.AugmentCookie);
-            DebugLogger.Log("AugmentCredentialStore", "Credentials cleared");
+            var result = SecureCredentialStore.DeleteCredential(CredentialKeys.AugmentCookie);
+            DebugLogger.Log("AugmentCredentialStore", $"Credentials cleared, result={result}");
+
+            // Verify deletion worked
+            var stillExists = HasCredentials();
+            if (stillExists)
+            {
+                DebugLogger.LogError("AugmentCredentialStore", "Credentials still exist after deletion!", null);
+                return false;
+            }
+
+            return true;
         }
         catch (Exception ex)
         {
             DebugLogger.LogError("AugmentCredentialStore", "Failed to clear credentials", ex);
+            return false;
         }
     }
 

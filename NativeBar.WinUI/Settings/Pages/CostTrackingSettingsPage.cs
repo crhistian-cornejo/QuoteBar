@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Media;
 using NativeBar.WinUI.Core.CostUsage;
 using NativeBar.WinUI.Core.Services;
 using NativeBar.WinUI.Settings.Controls;
+using NativeBar.WinUI.Settings.Helpers;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -166,17 +167,17 @@ public class CostTrackingSettingsPage : ISettingsPage
         // Provider sections
         if (_codexSnapshot != null && (_codexSnapshot.Daily.Count > 0 || _codexSnapshot.Last30DaysCostUSD > 0))
         {
-            _mainStack.Children.Add(CreateProviderSection("Codex (OpenAI)", "#7C3AED", _codexSnapshot));
+            _mainStack.Children.Add(CreateProviderSection("codex", "Codex (OpenAI)", "#7C3AED", _codexSnapshot));
         }
 
         if (_claudeSnapshot != null && (_claudeSnapshot.Daily.Count > 0 || _claudeSnapshot.Last30DaysCostUSD > 0))
         {
-            _mainStack.Children.Add(CreateProviderSection("Claude", "#D97757", _claudeSnapshot));
+            _mainStack.Children.Add(CreateProviderSection("claude", "Claude", "#D97757", _claudeSnapshot));
         }
 
         if (_copilotSnapshot != null && (_copilotSnapshot.Daily.Count > 0 || _copilotSnapshot.Last30DaysCostUSD > 0))
         {
-            _mainStack.Children.Add(CreateProviderSection("Copilot", "#24292F", _copilotSnapshot, isPremiumRequests: true));
+            _mainStack.Children.Add(CreateProviderSection("copilot", "Copilot", "#24292F", _copilotSnapshot, isPremiumRequests: true));
         }
 
         // No data message if all are empty
@@ -250,7 +251,7 @@ public class CostTrackingSettingsPage : ISettingsPage
         return card;
     }
 
-    private Border CreateProviderSection(string providerName, string colorHex, CostUsageTokenSnapshot snapshot, bool isPremiumRequests = false)
+    private Border CreateProviderSection(string providerId, string providerName, string colorHex, CostUsageTokenSnapshot snapshot, bool isPremiumRequests = false)
     {
         var color = ParseColor(colorHex);
 
@@ -270,15 +271,21 @@ public class CostTrackingSettingsPage : ISettingsPage
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var nameStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        nameStack.Children.Add(new Border
+        var nameStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+        
+        // Icon (branded border + SVG)
+        var iconElement = ProviderIconHelper.CreateProviderImage(providerId, size: 18, forIconWithBackground: true);
+        var iconBorder = new Border
         {
-            Width = 8,
-            Height = 8,
-            CornerRadius = new CornerRadius(4),
+            Width = 28,
+            Height = 28,
+            CornerRadius = new CornerRadius(6),
             Background = new SolidColorBrush(color),
-            VerticalAlignment = VerticalAlignment.Center
-        });
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = iconElement ?? (FrameworkElement)ProviderIconHelper.CreateProviderInitial(providerName, 12)
+        };
+        
+        nameStack.Children.Add(iconBorder);
         nameStack.Children.Add(new TextBlock
         {
             Text = providerName,

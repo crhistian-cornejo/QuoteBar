@@ -167,7 +167,8 @@ public class AppearanceSettingsPage : ISettingsPage
             ("Codex", "codex", "#7C3AED"),
             ("Droid", "droid", "#EE6018"),
             ("Antigravity", "antigravity", "#FF6B6B"),
-            ("z.ai", "zai", "#E85A6A")
+            ("z.ai", "zai", "#E85A6A"),
+            ("MiniMax", "minimax", "#E2167E")
         };
 
         foreach (var (displayName, id, color) in providers)

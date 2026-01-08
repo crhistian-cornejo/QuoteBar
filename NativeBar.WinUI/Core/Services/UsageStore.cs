@@ -202,11 +202,28 @@ public partial class UsageStore : ObservableObject
         return snapshot;
     }
     
+    /// <summary>
+    /// Clear a provider's snapshot (used when disconnecting)
+    /// Sets the snapshot to show as not configured
+    /// </summary>
+    public void ClearSnapshot(string providerId)
+    {
+        _snapshots[providerId] = new UsageSnapshot
+        {
+            ProviderId = providerId,
+            ErrorMessage = "Not configured",
+            FetchedAt = DateTime.UtcNow
+        };
+
+        OnPropertyChanged(nameof(GetCurrentSnapshot));
+        DebugLogger.Log("UsageStore", $"Cleared snapshot for {providerId}");
+    }
+
     public async Task RefreshAllAsync()
     {
         var tasks = ActiveProviderIds.Select(id => RefreshAsync(id));
         await Task.WhenAll(tasks);
-        
+
         // Notify listeners that all providers have been refreshed
         AllProvidersRefreshed?.Invoke();
     }

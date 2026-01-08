@@ -16,8 +16,8 @@ public sealed class UpdateService : IDisposable
     private static UpdateService? _instance;
     public static UpdateService Instance => _instance ??= new UpdateService();
 
-    private const string GitHubOwner = "tu-owner"; // TODO: Replace with actual owner (e.g., "nativebar")
-    private const string GitHubRepo = "windows"; // TODO: Replace with actual repo (e.g., "QuoteBar-Windows")
+    private const string GitHubOwner = "crhistian-cornejo";
+    private const string GitHubRepo = "QuoteBar";
     private const string GitHubApiUrl = $"https://api.github.com/repos/{GitHubOwner}/{GitHubRepo}/releases/latest";
     private const string UserAgent = "QuoteBar-WinUI";
 
@@ -259,14 +259,14 @@ Write-Host ''
 
 # Wait for main app to close
 Write-Host 'Waiting for QuoteBar to close...' -ForegroundColor Yellow
-$process = Get-Process -Name 'QuoteBar' -ErrorAction SilentlyContinue
+$process = Get-Process -Name 'NativeBar.WinUI' -ErrorAction SilentlyContinue
 $timeout = 30
 $elapsed = 0
 
 while ($process -and $elapsed -lt $timeout) {{
     Start-Sleep -Seconds 1
     $elapsed++
-    $process = Get-Process -Name 'QuoteBar' -ErrorAction SilentlyContinue
+    $process = Get-Process -Name 'NativeBar.WinUI' -ErrorAction SilentlyContinue
 }}
 
 if ($process) {{
@@ -297,7 +297,7 @@ Write-Host ''
 
 # Launch updated app
 Write-Host 'Starting QuoteBar...' -ForegroundColor Yellow
-& '{Path.Combine(currentAppPath, "QuoteBar.exe")}'
+& '{Path.Combine(currentAppPath, "NativeBar.WinUI.exe")}'
 
 Write-Host ''
 Write-Host 'Press any key to close this window...'
