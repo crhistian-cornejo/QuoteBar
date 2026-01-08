@@ -4,10 +4,12 @@ using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using NativeBar.WinUI.Controls;
+using NativeBar.WinUI.Core.CostUsage;
 using NativeBar.WinUI.Core.Models;
 using NativeBar.WinUI.Core.Providers;
 using NativeBar.WinUI.Core.Services;
@@ -66,6 +68,15 @@ public sealed class TrayPopupWindow : Window
     private StackPanel _footerLinksPanel = null!;
     private Border? _dashboardLink;
     private Border? _statusPageLink;
+
+    // Cost dashboard popup
+    private CostDashboardPopup? _costDashboardPopup;
+
+    /// <summary>
+    /// Returns true if the cost dashboard popup is currently visible
+    /// Used to prevent the main popup from closing when showing the cost dashboard
+    /// </summary>
+    public bool IsCostDashboardOpen => _costDashboardPopup != null;
 
     public event Action? PointerEnteredPopup;
     public event Action? PointerExitedPopup;
@@ -852,29 +863,42 @@ public sealed class TrayPopupWindow : Window
 
     /// <summary>
     /// Resize popup to fit current content (based on provider's usage sections)
+    /// Defers measurement to ensure layout is complete
     /// </summary>
     private void ResizePopupToFit()
     {
-        try
+        // Defer to next frame to ensure content is fully laid out before measuring
+        DispatcherQueue?.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
         {
-            var newHeight = CalculatePopupHeight();
-            var currentSize = _appWindow.Size;
-            
-            // Only resize if height changed significantly (avoid flicker)
-            if (Math.Abs(currentSize.Height - newHeight) > 20)
+            try
             {
-                // Keep current X position, adjust Y to grow upward
-                var currentPos = _appWindow.Position;
-                var heightDiff = newHeight - currentSize.Height;
-                var newY = currentPos.Y - heightDiff;
-                
-                _appWindow.MoveAndResize(new RectInt32(currentPos.X, newY, currentSize.Width, newHeight));
+                // Force layout update before measuring
+                _rootGrid.UpdateLayout();
+
+                var newHeight = CalculatePopupHeight();
+                var currentSize = _appWindow.Size;
+
+                // Only resize if height changed significantly (avoid flicker)
+                if (Math.Abs(currentSize.Height - newHeight) > 10)
+                {
+                    // Keep current X position, adjust Y to grow upward (popup anchored at bottom)
+                    var currentPos = _appWindow.Position;
+                    var heightDiff = newHeight - currentSize.Height;
+                    var newY = currentPos.Y - heightDiff;
+
+                    // Ensure we don't go above the screen
+                    var displayArea = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Primary);
+                    var workArea = displayArea.WorkArea;
+                    newY = Math.Max(workArea.Y + 8, newY);
+
+                    _appWindow.MoveAndResize(new RectInt32(currentPos.X, newY, currentSize.Width, newHeight));
+                }
             }
-        }
-        catch (Exception ex)
-        {
-            DebugLogger.LogError("TrayPopup", "ResizePopupToFit error", ex);
-        }
+            catch (Exception ex)
+            {
+                DebugLogger.LogError("TrayPopup", "ResizePopupToFit error", ex);
+            }
+        });
     }
 
     private void UpdateTabStyles()
@@ -1384,29 +1408,50 @@ public sealed class TrayPopupWindow : Window
     }
 
     /// <summary>
-    /// Calculate popup height based on number of enabled providers and actual usage sections
-    /// Height adapts dynamically to the current provider's data
+    /// Calculate popup height based on actual rendered content
+    /// Uses WinUI Measure() to get the true desired height
     /// </summary>
     private int CalculatePopupHeight()
     {
-        // Minimal base height: tabs, header, footer (without usage sections)
+        const int popupWidth = 340;
+        const int minHeight = 300;
+        const int maxHeight = 700;
+
+        try
+        {
+            // Measure the actual content to get desired height
+            _rootGrid.Measure(new Windows.Foundation.Size(popupWidth, double.PositiveInfinity));
+            var desiredHeight = (int)Math.Ceiling(_rootGrid.DesiredSize.Height);
+
+            // Clamp to reasonable bounds
+            return Math.Max(minHeight, Math.Min(maxHeight, desiredHeight));
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("TrayPopup", "CalculatePopupHeight measure error", ex);
+            // Fallback to estimate-based calculation
+            return CalculatePopupHeightFallback();
+        }
+    }
+
+    /// <summary>
+    /// Fallback height calculation using estimates (when Measure fails)
+    /// </summary>
+    private int CalculatePopupHeightFallback()
+    {
         int baseHeight = IsCompactMode ? 380 : 460;
         int tabRowHeight = IsCompactMode ? 28 : 36;
         int usageSectionHeight = IsCompactMode ? 55 : 70;
         const int baseTabRows = 2;
 
-        // Get enabled provider count for tab rows
         var allProviders = ProviderRegistry.Instance.GetAllProviders().ToList();
         var enabledCount = allProviders.Count(p => SettingsService.Instance.Settings.IsProviderEnabled(p.Id));
-        
+
         if (enabledCount == 0)
             enabledCount = allProviders.Count;
 
-        // Calculate extra tab rows
         int rowCount = (int)Math.Ceiling((double)enabledCount / MaxTabsPerRow);
         int extraTabRows = Math.Max(0, rowCount - baseTabRows);
-
-        // Get actual usage section count from current provider's snapshot
         int usageSectionCount = GetCurrentProviderUsageSectionCount();
 
         return baseHeight + (extraTabRows * tabRowHeight) + (usageSectionCount * usageSectionHeight);
@@ -1447,6 +1492,16 @@ public sealed class TrayPopupWindow : Window
 
     public void HidePopup()
     {
+        // Don't hide if cost dashboard is open - the user is interacting with it
+        if (IsCostDashboardOpen)
+        {
+            DebugLogger.Log("TrayPopupWindow", "HidePopup blocked - cost dashboard is open");
+            return;
+        }
+
+        // Close cost dashboard popup if open (safety check)
+        CloseCostDashboard();
+
         var hwnd = WindowNative.GetWindowHandle(this);
         ShowWindow(hwnd, 0);
     }
@@ -1614,30 +1669,39 @@ public sealed class TrayPopupWindow : Window
         labelRow.Children.Add(valueTextBlock);
         section.Children.Add(labelRow);
 
-        // Progress bar - apply CompactMode sizing
+        // Progress bar - apply CompactMode sizing, stretch to align with text
         var progressHeight = IsCompactMode ? 5.0 : 6.0;
-        var progressWidth = IsCompactMode ? 280.0 : 308.0;
         var progressRadius = progressHeight / 2;
 
         var progressTrack = new Border
         {
             Height = progressHeight,
-            Width = progressWidth,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
             CornerRadius = new CornerRadius(progressRadius),
             Background = new SolidColorBrush(ProgressTrackColor)
         };
+
+        // Use percentage-based width for the fill via a Grid
+        var progressContainer = new Grid();
 
         var progressFill = new Border
         {
             Height = progressHeight,
             CornerRadius = new CornerRadius(progressRadius),
             Background = new SolidColorBrush(GetProgressColor(percent)),
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Width = Math.Max(0, Math.Min(progressWidth * percent / 100.0, progressWidth))
+            HorizontalAlignment = HorizontalAlignment.Stretch
         };
 
-        var progressContainer = new Grid();
-        progressContainer.Children.Add(progressFill);
+        // Create a two-column grid: fill column (percent%) and empty column (remaining%)
+        var clampedPercent = Math.Max(0, Math.Min(percent, 100));
+        if (clampedPercent > 0)
+        {
+            progressContainer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(clampedPercent, GridUnitType.Star) });
+            progressContainer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100 - clampedPercent, GridUnitType.Star) });
+            Grid.SetColumn(progressFill, 0);
+            progressContainer.Children.Add(progressFill);
+        }
+
         progressTrack.Child = progressContainer;
         section.Children.Add(progressTrack);
 
@@ -1683,10 +1747,26 @@ public sealed class TrayPopupWindow : Window
 
     private void AddCostSection(ProviderCost cost)
     {
-        var section = new StackPanel { Spacing = 4, Margin = new Thickness(0, 8, 0, 0) };
+        // Wrap in a Border for rounded corners and better hover styling
+        var hoverColor = _isDarkMode
+            ? Windows.UI.Color.FromArgb(30, 255, 255, 255)  // Light overlay in dark mode
+            : Windows.UI.Color.FromArgb(20, 0, 0, 0);       // Dark overlay in light mode
 
-        // Header
+        var container = new Border
+        {
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(10, 8, 10, 8),
+            Margin = new Thickness(-10, 8, -10, 0),  // Negative margin to extend to edges
+            Background = new SolidColorBrush(Colors.Transparent)
+        };
+
+        var section = new StackPanel { Spacing = 4 };
+
+        // Header - clickable to show cost dashboard flyout
         var headerRow = new Grid();
+        headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
         var headerText = new TextBlock
         {
             Text = "Cost",
@@ -1694,6 +1774,8 @@ public sealed class TrayPopupWindow : Window
             FontWeight = Microsoft.UI.Text.FontWeights.Medium,
             Foreground = new SolidColorBrush(PrimaryTextColor)
         };
+        Grid.SetColumn(headerText, 0);
+
         var arrowIcon = new FontIcon
         {
             Glyph = "\uE76C",
@@ -1701,18 +1783,426 @@ public sealed class TrayPopupWindow : Window
             HorizontalAlignment = HorizontalAlignment.Right,
             Foreground = new SolidColorBrush(SecondaryTextColor)
         };
+        Grid.SetColumn(arrowIcon, 1);
+
         headerRow.Children.Add(headerText);
         headerRow.Children.Add(arrowIcon);
         section.Children.Add(headerRow);
 
-        // Today's cost
-        AddCostRow(section, "Today:", $"$ {cost.TotalCostUSD:F2}", "0 tokens");
+        // Today's cost (session)
+        var sessionCost = cost.SessionCostUSD ?? 0;
+        var sessionTokens = cost.SessionTokens ?? 0;
+        AddCostRow(section, "Today:",
+            FormatCostUSD(sessionCost),
+            FormatTokenCount(sessionTokens));
 
-        // Last 30 days (placeholder)
-        AddCostRow(section, "Last 30 days:", $"$ {cost.TotalCostUSD:F2}", "0 tokens");
+        // Last 30 days
+        AddCostRow(section, "Last 30 days:",
+            FormatCostUSD(cost.TotalCostUSD),
+            FormatTokenCount(cost.TotalTokens ?? 0));
 
-        _usageSectionsPanel.Children.Add(section);
+        container.Child = section;
+
+        // Attach click handler to show cost dashboard popup
+        container.Tapped += async (s, e) =>
+        {
+            DebugLogger.Log("TrayPopupWindow", "Cost section tapped");
+            e.Handled = true;
+            await ShowCostDashboardPopupAsync();
+        };
+
+        // Hover effect - works in both dark and light mode
+        container.PointerEntered += (s, e) =>
+        {
+            container.Background = new SolidColorBrush(hoverColor);
+        };
+        container.PointerExited += (s, e) =>
+        {
+            container.Background = new SolidColorBrush(Colors.Transparent);
+        };
+
+        _usageSectionsPanel.Children.Add(container);
     }
+
+    private async Task ShowCostDashboardPopupAsync()
+    {
+        try
+        {
+            DebugLogger.Log("TrayPopupWindow", "ShowCostDashboardPopupAsync called");
+
+            // Close existing popup if any
+            _costDashboardPopup?.Close();
+
+            // Get current popup position to place cost dashboard next to it
+            var popupPos = _appWindow.Position;
+            var popupSize = _appWindow.Size;
+
+            // Determine if we should show on left or right
+            // Get screen work area
+            var displayArea = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Primary);
+            var workArea = displayArea.WorkArea;
+
+            // Calculate available space on each side
+            var spaceOnRight = workArea.Width - (popupPos.X + popupSize.Width);
+            var spaceOnLeft = popupPos.X - workArea.X;
+
+            const int dashboardWidth = 300;
+            const int gap = 8;
+
+            int dashboardX;
+            if (spaceOnRight >= dashboardWidth + gap)
+            {
+                // Show on right
+                dashboardX = popupPos.X + popupSize.Width + gap;
+            }
+            else if (spaceOnLeft >= dashboardWidth + gap)
+            {
+                // Show on left
+                dashboardX = popupPos.X - dashboardWidth - gap;
+            }
+            else
+            {
+                // Not enough space, show on right anyway (will overlap taskbar)
+                dashboardX = popupPos.X + popupSize.Width + gap;
+            }
+
+            // Align top with popup
+            int dashboardY = popupPos.Y;
+
+            // Create and show cost dashboard popup
+            _costDashboardPopup = new CostDashboardPopup(
+                _selectedProviderId,
+                _isDarkMode,
+                () => SettingsPageRequested?.Invoke("cost"));
+
+            // Subscribe to closed event to clean up reference
+            _costDashboardPopup.Closed += () =>
+            {
+                DebugLogger.Log("TrayPopupWindow", "CostDashboard closed");
+                _costDashboardPopup = null;
+            };
+
+            _costDashboardPopup.PositionAt(dashboardX, dashboardY);
+            DebugLogger.Log("TrayPopupWindow", $"CostDashboard positioned at ({dashboardX}, {dashboardY})");
+            _costDashboardPopup.Show();
+            DebugLogger.Log("TrayPopupWindow", "CostDashboard Show() called");
+
+            // Load data
+            await _costDashboardPopup.LoadDataAsync();
+            DebugLogger.Log("TrayPopupWindow", "CostDashboard LoadDataAsync completed");
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("TrayPopupWindow", "ShowCostDashboardPopupAsync failed", ex);
+        }
+    }
+
+    /// <summary>
+    /// Close the cost dashboard popup (called when main popup hides)
+    /// </summary>
+    public void CloseCostDashboard()
+    {
+        _costDashboardPopup?.Close();
+        _costDashboardPopup = null;
+    }
+
+    private async Task LoadCostDashboardAsync(StackPanel container)
+    {
+        try
+        {
+            // Determine provider based on selected tab
+            var providerId = _selectedProviderId?.ToLowerInvariant();
+            CostUsageProvider? costProvider = providerId switch
+            {
+                "codex" => CostUsageProvider.Codex,
+                "claude" => CostUsageProvider.Claude,
+                _ => null
+            };
+
+            if (costProvider == null)
+            {
+                // Provider doesn't support cost tracking
+                container.Children.Clear();
+                container.Children.Add(new TextBlock
+                {
+                    Text = "Cost tracking not available for this provider",
+                    FontSize = 11,
+                    Foreground = new SolidColorBrush(SecondaryTextColor),
+                    TextWrapping = TextWrapping.Wrap
+                });
+                return;
+            }
+
+            // Load cost data
+            var snapshot = await CostUsageFetcher.Instance.LoadTokenSnapshotAsync(costProvider.Value);
+
+            // Clear loading indicator
+            container.Children.Clear();
+
+            // Header
+            var header = new TextBlock
+            {
+                Text = $"{_selectedProviderId} Cost",
+                FontSize = 14,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(PrimaryTextColor)
+            };
+            container.Children.Add(header);
+
+            // Summary card
+            var summaryCard = CreateCostSummaryCard(snapshot);
+            container.Children.Add(summaryCard);
+
+            // Daily chart (if we have data)
+            if (snapshot.Daily.Count > 0)
+            {
+                var chartLabel = new TextBlock
+                {
+                    Text = "Last 14 Days",
+                    FontSize = 11,
+                    Foreground = new SolidColorBrush(SecondaryTextColor),
+                    Margin = new Thickness(0, 8, 0, 4)
+                };
+                container.Children.Add(chartLabel);
+
+                var chart = CreateMiniDailyChart(snapshot.Daily.ToList());
+                container.Children.Add(chart);
+            }
+            else
+            {
+                container.Children.Add(new TextBlock
+                {
+                    Text = "No usage data available",
+                    FontSize = 11,
+                    Foreground = new SolidColorBrush(TertiaryTextColor),
+                    Margin = new Thickness(0, 8, 0, 0)
+                });
+            }
+
+            // Footer link to full dashboard
+            var footerLink = new HyperlinkButton
+            {
+                Content = "View full dashboard in Settings →",
+                FontSize = 10,
+                Foreground = new SolidColorBrush(DefaultAccentColor),
+                Padding = new Thickness(0),
+                Margin = new Thickness(0, 8, 0, 0)
+            };
+            footerLink.Click += (s, e) =>
+            {
+                SettingsPageRequested?.Invoke("cost");
+            };
+            container.Children.Add(footerLink);
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("TrayPopupWindow", "LoadCostDashboardAsync failed", ex);
+            container.Children.Clear();
+            container.Children.Add(new TextBlock
+            {
+                Text = "Failed to load cost data",
+                FontSize = 11,
+                Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 100, 100))
+            });
+        }
+    }
+
+    // Default accent color for cost dashboard (purple)
+    private static Windows.UI.Color DefaultAccentColor => Windows.UI.Color.FromArgb(255, 124, 58, 237);
+
+    private Border CreateCostSummaryCard(CostUsageTokenSnapshot snapshot)
+    {
+        var card = new Border
+        {
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(30, 255, 255, 255)),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(12, 10, 12, 10)
+        };
+
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        // Today column
+        var todayStack = new StackPanel { Spacing = 2 };
+        todayStack.Children.Add(new TextBlock
+        {
+            Text = "Today",
+            FontSize = 10,
+            Foreground = new SolidColorBrush(TertiaryTextColor)
+        });
+        todayStack.Children.Add(new TextBlock
+        {
+            Text = FormatCostUSD(snapshot.SessionCostUSD ?? 0),
+            FontSize = 16,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 76, 175, 80)) // Green
+        });
+        todayStack.Children.Add(new TextBlock
+        {
+            Text = FormatTokenCount(snapshot.SessionTokens ?? 0),
+            FontSize = 10,
+            Foreground = new SolidColorBrush(SecondaryTextColor)
+        });
+        Grid.SetColumn(todayStack, 0);
+        grid.Children.Add(todayStack);
+
+        // 30-day column
+        var monthStack = new StackPanel { Spacing = 2, HorizontalAlignment = HorizontalAlignment.Right };
+        monthStack.Children.Add(new TextBlock
+        {
+            Text = "Last 30 days",
+            FontSize = 10,
+            Foreground = new SolidColorBrush(TertiaryTextColor),
+            HorizontalAlignment = HorizontalAlignment.Right
+        });
+        monthStack.Children.Add(new TextBlock
+        {
+            Text = FormatCostUSD(snapshot.Last30DaysCostUSD ?? 0),
+            FontSize = 16,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(PrimaryTextColor),
+            HorizontalAlignment = HorizontalAlignment.Right
+        });
+        monthStack.Children.Add(new TextBlock
+        {
+            Text = FormatTokenCount(snapshot.Last30DaysTokens ?? 0),
+            FontSize = 10,
+            Foreground = new SolidColorBrush(SecondaryTextColor),
+            HorizontalAlignment = HorizontalAlignment.Right
+        });
+        Grid.SetColumn(monthStack, 1);
+        grid.Children.Add(monthStack);
+
+        card.Child = grid;
+        return card;
+    }
+
+    private Grid CreateMiniDailyChart(List<CostUsageDailyEntry> daily)
+    {
+        var grid = new Grid { Height = 80 };
+
+        // Get provider color
+        var provider = ProviderRegistry.Instance.GetProvider(_selectedProviderId);
+        var barColor = DefaultAccentColor;
+        if (provider != null && !string.IsNullOrEmpty(provider.PrimaryColor))
+        {
+            try
+            {
+                var hex = provider.PrimaryColor.TrimStart('#');
+                barColor = Windows.UI.Color.FromArgb(255,
+                    Convert.ToByte(hex.Substring(0, 2), 16),
+                    Convert.ToByte(hex.Substring(2, 2), 16),
+                    Convert.ToByte(hex.Substring(4, 2), 16));
+            }
+            catch { }
+        }
+
+        // Generate 14 days
+        var today = DateTime.Today;
+        var last14Days = Enumerable.Range(0, 14)
+            .Select(i => today.AddDays(-13 + i))
+            .ToList();
+
+        // Create lookup
+        var dataByDate = daily.ToDictionary(
+            d => d.Date,
+            d => d,
+            StringComparer.OrdinalIgnoreCase);
+
+        // Find max cost for scaling
+        var maxCost = daily.Count > 0 ? daily.Max(d => d.CostUSD ?? 0) : 0;
+        if (maxCost <= 0) maxCost = 1;
+
+        var barsPanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 2,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Bottom
+        };
+
+        foreach (var date in last14Days)
+        {
+            var dateKey = CostUsageDayRange.DayKey(date);
+            var hasData = dataByDate.TryGetValue(dateKey, out var entry);
+            var cost = entry?.CostUSD ?? 0;
+            var tokens = entry?.TotalTokens ?? 0;
+
+            var heightRatio = maxCost > 0 ? cost / maxCost : 0;
+            var barHeight = cost > 0 ? Math.Max(heightRatio * 50, 3) : 2;
+
+            var barContainer = new StackPanel { Width = 16, Spacing = 2 };
+
+            var bar = new Border
+            {
+                Width = 12,
+                Height = barHeight,
+                Background = new SolidColorBrush(cost > 0 ? barColor :
+                    Windows.UI.Color.FromArgb(40, barColor.R, barColor.G, barColor.B)),
+                CornerRadius = new CornerRadius(2),
+                VerticalAlignment = VerticalAlignment.Bottom,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 50 - barHeight, 0, 0)
+            };
+
+            // Day label (only show for some days to avoid clutter)
+            var showLabel = date.Day == 1 || date == last14Days[0] || date == last14Days[^1];
+            var dayLabel = new TextBlock
+            {
+                Text = showLabel ? date.Day.ToString() : "",
+                FontSize = 7,
+                Foreground = new SolidColorBrush(TertiaryTextColor),
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
+
+            barContainer.Children.Add(bar);
+            barContainer.Children.Add(dayLabel);
+
+            // Tooltip
+            var tooltipText = cost > 0
+                ? $"{date:MMM d}\n{FormatCostUSD(cost)}\n{FormatTokenCount(tokens)}"
+                : $"{date:MMM d}\nNo usage";
+            ToolTipService.SetToolTip(barContainer, tooltipText);
+
+            barsPanel.Children.Add(barContainer);
+        }
+
+        // Legend
+        var chartStack = new StackPanel { Spacing = 4 };
+        chartStack.Children.Add(barsPanel);
+
+        var legend = new TextBlock
+        {
+            Text = $"Peak: {FormatCostUSD(maxCost)}",
+            FontSize = 9,
+            Foreground = new SolidColorBrush(TertiaryTextColor),
+            HorizontalAlignment = HorizontalAlignment.Center
+        };
+        chartStack.Children.Add(legend);
+
+        grid.Children.Add(chartStack);
+        return grid;
+    }
+
+    private static string FormatCostUSD(double amount)
+    {
+        if (amount >= 1000)
+            return $"${amount:N0}";
+        if (amount >= 10)
+            return $"${amount:F1}";
+        return $"${amount:F2}";
+    }
+
+    private static string FormatTokenCount(int tokens)
+    {
+        if (tokens >= 1_000_000)
+            return $"{tokens / 1_000_000.0:F1}M tokens";
+        if (tokens >= 1_000)
+            return $"{tokens / 1_000.0:F1}K tokens";
+        return $"{tokens:N0} tokens";
+    }
+
 
     private void AddCostRow(StackPanel parent, string label, string cost, string tokens)
     {
@@ -1997,7 +2487,10 @@ public sealed class TrayPopupWindow : Window
     {
         // Ignore pointer exit during grace period (tab switch / resize)
         if (_suppressPointerExit) return;
-        
+
+        // Don't close when cost dashboard is open
+        if (IsCostDashboardOpen) return;
+
         PointerExitedPopup?.Invoke();
     }
 

@@ -38,6 +38,7 @@ public class CopilotOAuthStrategy : IProviderFetchStrategy
 {
     public string StrategyName => "OAuth";
     public int Priority => 2; // Higher priority - try first
+    public StrategyType Type => StrategyType.OAuth;
 
     public Task<bool> CanExecuteAsync()
     {
@@ -111,6 +112,7 @@ public class CopilotCLIStrategy : IProviderFetchStrategy
 {
     public string StrategyName => "CLI";
     public int Priority => 1; // Lower priority - fallback
+    public StrategyType Type => StrategyType.CLI;
 
     public async Task<bool> CanExecuteAsync()
     {

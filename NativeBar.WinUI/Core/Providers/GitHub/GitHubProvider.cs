@@ -24,7 +24,8 @@ public class GitHubOAuthStrategy : IProviderFetchStrategy
 {
     public string StrategyName => "OAuth";
     public int Priority => 1;
-    
+    public StrategyType Type => StrategyType.OAuth;
+
     public async Task<bool> CanExecuteAsync()
     {
         var token = await GetStoredTokenAsync();

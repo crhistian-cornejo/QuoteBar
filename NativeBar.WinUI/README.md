@@ -1,217 +1,229 @@
-# NativeBar - AI Usage Monitor for Windows
+# NativeBar for Windows
 
-NativeBar es una aplicación nativa de Windows (WinUI 3) que monitorea el uso de APIs de múltiples proveedores de IA desde la barra de tareas, similar a CodexBar pero para Windows.
+![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
+![Windows](https://img.shields.io/badge/Windows-10%2B-informational?logo=windows)
+![.NET](https://img.shields.io/badge/.NET-9.0-purple.svg)
+![Platform](https://img.shields.io/badge/Platform-WinUI%203-lightgrey.svg)
 
-## Características
+WinUI 3 application that monitors AI provider usage from the system tray. Track quotas, spending, and status across Claude, Codex, Cursor, Gemini, Copilot, Droid, z.ai, Antigravity, Augment, and MiniMax.
 
-- **System Tray Icon**: Icono en la barra de tareas con menú contextual
-- **Popover/Flyout**: Ventana flotante con información detallada de uso
-- **Múltiples Providers**: Soporte para Claude, Codex, GitHub Copilot, y Antigravity
-- **Progress Bars**: Visualización de uso con barras de progreso y porcentajes
-- **Fetch Strategies**: Sistema de fallback automático (OAuth → Web → CLI)
-- **Auto-refresh**: Actualización automática cada 5 minutos
-- **Indicadores de Costo**: Tracking de costos en USD
+![PopOver](../docs/images/PopOver.png)
 
-## Arquitectura
+## Overview
 
-### Core Components
+NativeBar runs in your system tray and shows real-time usage metrics. View daily/weekly limits, track costs, and monitor service status without interrupting your workflow.
 
-#### Provider System
-- **IProviderDescriptor**: Define metadata y capacidades de cada provider
-- **IProviderFetchStrategy**: Estrategias de obtención de datos con prioridades
-- **ProviderRegistry**: Registro central de todos los providers
-- **UsageFetcher**: Ejecuta estrategias con fallback automático
+## Features
 
-#### Data Models
-- **UsageSnapshot**: Snapshot completo del uso de un provider
-- **RateWindow**: Ventana de tiempo con porcentaje usado y reset info
-- **ProviderIdentity**: Información de cuenta (email, plan)
-- **ProviderCost**: Tracking de costos
+- System tray integration with live usage indicators
+- Multi-provider support (10+ AI services)
+- Secure credential storage (Windows Credential Manager)
+- Auto-update via GitHub Releases
+- Cost tracking with 30‑day history
+- Provider ordering and custom settings
+- Native Windows 11 design (Mica, WinUI 3)
+- Dark/light theme (system-aware)
+- Service status monitoring (incident alerts)
+- Manual and auto‑refresh modes
+- Keyboard shortcuts
 
-#### State Management
-- **UsageStore**: Store central observable con MVVM
-- Auto-refresh cada 5 minutos
-- Soporte para múltiples providers simultáneos
+## Supported Providers
 
-### UI Architecture
+| Provider | Auth | Limits | Cost |
+|----------|--------|---------|-------|
+| [Claude](../docs/claude.md) | OAuth/CLI | Session + Weekly | ✅ |
+| [Codex](../docs/codex.md) | OAuth | Usage + Billing | - |
+| [Cursor](../docs/cursor.md) | API | Billing cycle | ✅ |
+| [Gemini](../docs/gemini.md) | OAuth | Quota limits | - |
+| [Copilot](../docs/copilot.md) | OAuth | Plan usage | - |
+| [Droid](../docs/droid.md) | API | Billing cycle | - |
+| [z.ai](../docs/zai.md) | API Token | Quota limits | - |
+| [Antigravity](../docs/antigravity.md) | Local probe | Session + Weekly | - |
+| [Augment](../docs/augment.md) | Cookies | Session + Credits | - |
+| [MiniMax](../docs/minimax.md) | Cookies | Quota limits | - |
 
-#### System Tray
-- Implementado con `H.NotifyIcon.WinUI`
-- Click izquierdo: Abre ventana principal
-- Click derecho: Menú contextual (Refresh, Exit)
+## Settings
 
-#### Main Window
-- WinUI 3 con XAML
-- MVVM pattern con CommunityToolkit.Mvvm
-- Data binding con converters
-- Progress bars customizadas
+Configure NativeBar from the system tray menu:
 
-### Providers Implementados
+- **Providers** – Toggle visibility, configure authentication, reorder providers
+- **Cost Tracking** – View 30‑day spending history with daily breakdowns
 
-#### 1. Claude
-- **OAuth Strategy**: API oficial de Anthropic
-- **Web Strategy**: Scraping del dashboard
-- **Métricas**: 5-hour window, 24-hour window
+![CostTracking](../docs/images/CostTracking.png)
 
-#### 2. Codex/OpenAI
-- **RPC Strategy**: JSON-RPC con daemon local
-- **CLI Strategy**: Parsing de `codex status`
-- **Métricas**: 5-hour window, weekly limit, credits
+- **Provider Order** – Arrange providers in your preferred order
+- **General** – Refresh intervals, startup, keyboard shortcuts
+- **Appearance** – Theme, compact mode, accent colors
+- **Notifications** – Usage alerts, sounds, threshold settings
 
-#### 3. GitHub Copilot
-- **OAuth Strategy**: GitHub API
-- **Métricas**: Monthly usage, completions
+![Providers](../docs/images/Providers.png)
 
-#### 4. Antigravity
-- **OAuth Strategy**: API REST
-- **Métricas**: Daily usage, weekly usage
+## Install
 
-## Estructura del Proyecto
+### Requirements
 
-```
-NativeBar.WinUI/
-├── Core/
-│   ├── Models/
-│   │   └── UsageSnapshot.cs          # Data models
-│   ├── Providers/
-│   │   ├── IProviderDescriptor.cs    # Provider interfaces
-│   │   ├── ProviderRegistry.cs       # Registry & fetcher
-│   │   ├── Claude/
-│   │   │   └── ClaudeProvider.cs
-│   │   ├── Codex/
-│   │   │   └── CodexProvider.cs
-│   │   ├── GitHub/
-│   │   │   └── GitHubProvider.cs
-│   │   └── Antigravity/
-│   │       └── AntigravityProvider.cs
-│   └── Services/
-│       └── UsageStore.cs             # State management
-├── ViewModels/
-│   └── MainViewModel.cs              # Main VM
-├── Controls/
-│   └── UsageProgressBar.cs           # Custom progress bar
-├── Converters/
-│   └── ValueConverters.cs            # XAML converters
-├── App.xaml                          # Application entry
-├── App.xaml.cs
-├── MainWindow.xaml                   # Main UI
-└── MainWindow.xaml.cs
+- Windows 10 (19041) or later
+- Windows 11 recommended for best experience
+
+### Quick Install
+
+Download the latest release from [GitHub Releases](https://github.com/your-org/QuoteBar/releases) and run `QuoteBar.exe`.
+
+### Development Build
+
+```powershell
+cd QuoteBar
+.\dev.ps1 run
 ```
 
-## Requisitos
+## Development
 
-- Windows 10 version 1809 (build 17763) o superior
-- .NET 9.0
-- Windows App SDK 1.6
+### Build
 
-## Instalación
+```powershell
+# Release build
+.\dev.ps1 build
 
-1. Clonar el repositorio
-2. Restaurar paquetes NuGet:
-   ```bash
-   dotnet restore
-   ```
+# Run in release mode
+.\dev.ps1 run
 
-3. Compilar el proyecto:
-   ```bash
-   dotnet build
-   ```
+# Watch mode (hot reload)
+.\dev.ps1 watch
 
-4. Ejecutar:
-   ```bash
-   dotnet run
-   ```
+# Clean
+.\dev.ps1 clean
 
-## Desarrollo
+# Publish for distribution
+.\dev.ps1 publish
+```
 
-### Agregar un Nuevo Provider
+### Project Details
 
-1. Crear una clase que herede de `ProviderDescriptor`:
+**Technology Stack**
+- UI: WinUI 3 (Windows App SDK 1.6)
+- Language: C# (.NET 9.0)
+- Architecture: MVVM with CommunityToolkit.Mvvm
+- XAML: Compiled XAML with hot reload
+
+**Key Patterns**
+- Provider registry with fallback strategies
+- MVVM with observable properties
+- Dependency injection via IServiceProvider
+- Async/await throughout
+- Settings persistence via JSON
+- Secure credentials via Windows Credential Manager
+
+### Adding a New Provider
+
+1. Create provider folder in `Core/Providers/YourProvider/`
+2. Implement `IProviderDescriptor` with fetch strategies
+3. Register in `ProviderRegistry.RegisterDefaultProviders()`
+4. Add to visibility toggles in `ProvidersSettingsPage.cs`
+5. Add icon in `Assets/icons/yourprovider.svg`
+
+For dynamic settings, implement `IProviderWithSettings`:
 
 ```csharp
-public class MyProviderDescriptor : ProviderDescriptor
+public class MyProviderSettings : ProviderSettingsBase
 {
-    public override string Id => "myprovider";
-    public override string DisplayName => "My Provider";
-    public override string IconGlyph => "\uE943";
-    public override string PrimaryColor => "#FF0000";
-    public override string SecondaryColor => "#FF6666";
-    public override string PrimaryLabel => "Daily usage";
-    public override string SecondaryLabel => "Monthly usage";
-    
-    protected override void InitializeStrategies()
+    public override List<ProviderSettingDefinition> GetSettingDefinitions()
     {
-        AddStrategy(new MyOAuthStrategy());
+        return new()
+        {
+            new ProviderSettingDefinition
+            {
+                Key = "timeout",
+                DisplayName = "Request Timeout",
+                Type = ProviderSettingType.NumberBox,
+                DefaultValue = "30",
+                MinValue = 5,
+                MaxValue = 120
+            }
+        };
+    }
+
+    public override Task ApplySettingAsync(string key, string? value)
+    {
+        // Apply to provider
+    }
+
+    public override Task<string?> GetSettingValueAsync(string key)
+    {
+        // Return current value
     }
 }
 ```
 
-2. Implementar estrategias de fetch:
+### Releasing
 
-```csharp
-public class MyOAuthStrategy : IProviderFetchStrategy
-{
-    public string StrategyName => "OAuth";
-    public int Priority => 1;
-    
-    public async Task<bool> CanExecuteAsync()
-    {
-        // Verificar si hay token disponible
-        return true;
-    }
-    
-    public async Task<UsageSnapshot> FetchAsync(CancellationToken ct)
-    {
-        // Obtener datos del API
-        return new UsageSnapshot { /* ... */ };
-    }
-}
+1. Bump version in `NativeBar.WinUI.csproj`
+2. Build: `.\dev.ps1 release`
+3. Create GitHub release with tag
+4. Upload `QuoteBar-*.zip` from `bin/Release/`
+5. Auto‑updater will notify users
+
+## Storage
+
+### Settings
+
+```
+%LocalAppData%\QuoteBar\settings.json
 ```
 
-3. Registrar en `ProviderRegistry.RegisterDefaultProviders()`:
+### Usage History
 
-```csharp
-Register(new MyProviderDescriptor());
+```
+%LocalAppData%\QuoteBar\usage_history.json
 ```
 
-## Pendientes / TODOs
+### Credentials
 
-- [ ] Implementar Windows Credential Manager para tokens
-- [ ] Parsear respuestas JSON de APIs reales
-- [ ] Web scraping con browser automation
-- [ ] CLI parsing para cada provider
-- [ ] Animaciones de iconos (blink, wiggle, tilt)
-- [ ] Renderizado custom de iconos en system tray
-- [ ] Charts para historial de uso
-- [ ] Settings window para configuración
-- [ ] Multi-account support
-- [ ] Notificaciones cuando se alcancen límites
-- [ ] Dark/Light theme support
-- [ ] Exportar datos de uso
+API tokens stored in Windows Credential Manager (DPAPI encrypted).
 
-## Similitudes con CodexBar
+## Keyboard Shortcuts
 
-Esta implementación replica la arquitectura de CodexBar:
+| Shortcut | Action |
+|----------|--------|
+| `Win + Shift + Q` | Toggle popup |
+| `1`‑`9` | Switch provider |
+| `R` | Refresh data |
+| `D` | Open dashboard |
+| `S` | Open settings |
+| `P` | Pin popup |
+| `Esc` | Close popup |
+| `?` | Show help |
 
-1. **Provider System**: Mismo patrón descriptor + strategy
-2. **Fetch Fallback**: OAuth → Web → CLI chain
-3. **Data Models**: UsageSnapshot, RateWindow, etc.
-4. **UI Layout**: Header, progress bars, cost tracking
-5. **Auto-refresh**: Timer de 5 minutos
-6. **Multi-provider**: Switch entre providers
+## Privacy & Security
 
-## Diferencias con CodexBar
+- API tokens stored in Windows Credential Manager (encrypted)
+- Browser cookies reused when enabled (no password storage)
+- No data sent to external servers except provider APIs
+- Local storage only (settings + usage history)
+- Open source: [GitHub](https://github.com/your-org/QuoteBar)
 
-1. **Platform**: WinUI 3 en lugar de SwiftUI + AppKit
-2. **System Tray**: H.NotifyIcon en lugar de NSStatusItem
-3. **State Management**: CommunityToolkit.Mvvm en lugar de @Observable
-4. **Icon Rendering**: Pendiente (CodexBar usa Core Graphics)
-5. **Web Scraping**: Pendiente (CodexBar usa WKWebView)
+## Documentation
 
-## Licencia
+- [Provider setup guides](../docs/)
+- [Architecture overview](../docs/architecture.md)
+- [Settings reference](../docs/settings.md)
+- [Release process](../docs/releasing.md)
+
+## Credits
+
+Inspired by [CodexBar](https://github.com/steipete/CodexBar) for macOS.
+
+## License
 
 MIT
 
-## Créditos
+---
 
-Inspirado en [CodexBar](https://github.com/example/CodexBar) de macOS.
+![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
+![Windows](https://img.shields.io/badge/Windows-10%2B-informational?logo=windows)
+![.NET](https://img.shields.io/badge/.NET-9.0-purple.svg)
+![Platform](https://img.shields.io/badge/Platform-WinUI%203-lightgrey.svg)
+
+![GitHub release](https://img.shields.io/github/v-release/your-org/QuoteBar?display_name=release)
+![GitHub stars](https://img.shields.io/github/stars/your-org/QuoteBar?style=social)
+![GitHub forks](https://img.shields.io/github/forks/your-org/QuoteBar?style=social)
+![GitHub issues](https://img.shields.io/github/issues/your-org/QuoteBar)

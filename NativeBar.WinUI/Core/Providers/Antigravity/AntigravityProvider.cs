@@ -44,6 +44,7 @@ public class AntigravityLocalProbeStrategy : IProviderFetchStrategy
 {
     public string StrategyName => "LocalProbe";
     public int Priority => 1;
+    public StrategyType Type => StrategyType.AutoDetect;
 
     private const string ProcessName = "language_server_windows";
     private const string GetUserStatusPath = "/exa.language_server_pb.LanguageServerService/GetUserStatus";

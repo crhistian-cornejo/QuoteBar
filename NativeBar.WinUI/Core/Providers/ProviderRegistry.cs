@@ -10,6 +10,7 @@ using NativeBar.WinUI.Core.Providers.Copilot;
 using NativeBar.WinUI.Core.Providers.Zai;
 using NativeBar.WinUI.Core.Providers.Augment;
 using NativeBar.WinUI.Core.Providers.MiniMax;
+using NativeBar.WinUI.Core.Services;
 
 namespace NativeBar.WinUI.Core.Providers;
 
@@ -41,16 +42,46 @@ public class ProviderRegistry
     
     public IReadOnlyList<IProviderDescriptor> GetAllProviders()
     {
-        // Return providers sorted alphabetically by display name
+        var settings = Core.Services.SettingsService.Instance;
+
+        if (settings.Settings.ProviderOrder.Count > 0)
+        {
+            var ordered = new List<IProviderDescriptor>();
+
+            foreach (var providerId in settings.Settings.ProviderOrder)
+            {
+                if (_providers.TryGetValue(providerId, out var provider))
+                {
+                    ordered.Add(provider);
+                }
+            }
+
+            foreach (var provider in _providers.Values)
+            {
+                if (!settings.Settings.ProviderOrder.Contains(provider.Id))
+                {
+                    ordered.Add(provider);
+                }
+            }
+
+            return ordered.AsReadOnly();
+        }
+
         return _providers.Values
             .OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToList()
             .AsReadOnly();
     }
-    
+
+    public void SaveProviderOrder(List<string> providerIds)
+    {
+        var settings = Core.Services.SettingsService.Instance;
+        settings.Settings.ProviderOrder = providerIds;
+        settings.Save();
+    }
+
     private void RegisterDefaultProviders()
     {
-        // Register built-in providers (alphabetical order)
         Register(new AntigravityProviderDescriptor());
         Register(new AugmentProviderDescriptor());
         Register(new ClaudeProviderDescriptor());
@@ -78,9 +109,14 @@ public class UsageFetcher
     
     public async Task<UsageSnapshot> FetchAsync(CancellationToken cancellationToken = default)
     {
-        var strategies = _descriptor.FetchStrategies;
+        // Get user's preferred strategy from settings
+        var config = Core.Services.SettingsService.Instance.Settings.GetProviderConfig(_descriptor.Id);
+        var preferredStrategy = ParseAuthenticationStrategy(config.PreferredStrategy);
+        
+        // Filter strategies based on user preference
+        var strategies = _descriptor.GetStrategiesForPreference(preferredStrategy).ToList();
 
-        Log($"[{_descriptor.Id}] FetchAsync: {strategies.Count} strategies available");
+        Log($"[{_descriptor.Id}] FetchAsync: {strategies.Count} strategies available (preference: {preferredStrategy})");
 
         if (strategies.Count == 0)
         {
@@ -100,7 +136,7 @@ public class UsageFetcher
         {
             try
             {
-                Log($"[{_descriptor.Id}] Checking strategy: {strategy.StrategyName}");
+                Log($"[{_descriptor.Id}] Checking strategy: {strategy.StrategyName} (type: {strategy.Type})");
 
                 if (!await strategy.CanExecuteAsync())
                 {
@@ -137,7 +173,7 @@ public class UsageFetcher
         string errorMessage;
         if (allStrategiesSkipped)
         {
-            errorMessage = GetNoCredentialsMessage(_descriptor.Id);
+            errorMessage = GetNoCredentialsMessage(_descriptor.Id, preferredStrategy);
         }
         else
         {
@@ -153,24 +189,71 @@ public class UsageFetcher
     }
 
     /// <summary>
+    /// Parse the string preference to enum
+    /// </summary>
+    private static AuthenticationStrategy ParseAuthenticationStrategy(string? preference)
+    {
+        if (string.IsNullOrEmpty(preference))
+            return AuthenticationStrategy.Auto;
+
+        return preference.ToLowerInvariant() switch
+        {
+            "cli" => AuthenticationStrategy.CLI,
+            "oauth" => AuthenticationStrategy.OAuth,
+            "manual" => AuthenticationStrategy.Manual,
+            _ => AuthenticationStrategy.Auto
+        };
+    }
+
+    /// <summary>
     /// Get a user-friendly message when no credentials are available
     /// </summary>
-    private static string GetNoCredentialsMessage(string providerId)
+    private static string GetNoCredentialsMessage(string providerId, AuthenticationStrategy preference)
     {
-        return providerId.ToLower() switch
+        // Add context about the selected strategy
+        var strategyHint = preference switch
         {
-            "claude" => "Not authenticated. Run 'claude' CLI to login.",
+            AuthenticationStrategy.CLI => " (CLI mode selected)",
+            AuthenticationStrategy.OAuth => " (OAuth mode selected)",
+            AuthenticationStrategy.Manual => " (Manual mode selected)",
+            _ => ""
+        };
+
+        var baseMessage = providerId.ToLower() switch
+        {
+            "claude" => preference switch
+            {
+                AuthenticationStrategy.CLI => "CLI not available. Run 'claude' to login.",
+                AuthenticationStrategy.OAuth => "Not authenticated. Run 'claude' to get OAuth credentials.",
+                _ => "Not authenticated. Run 'claude' CLI to login."
+            },
             "codex" => "Not authenticated. Run 'codex auth login' to login.",
             "gemini" => "Not authenticated. Run 'gemini auth login' to login.",
-            "copilot" => "Not authenticated. Click 'Connect' to sign in with GitHub.",
-            "cursor" => "Not authenticated. Click 'Connect' to sign in.",
+            "copilot" => preference switch
+            {
+                AuthenticationStrategy.OAuth => "Not authenticated. Click 'Connect' to sign in with GitHub.",
+                _ => "Not authenticated. Click 'Connect' to sign in with GitHub."
+            },
+            "cursor" => preference switch
+            {
+                AuthenticationStrategy.OAuth => "Not authenticated. Click 'Connect' to sign in.",
+                AuthenticationStrategy.Manual => "No cookie configured. Paste your cookie header in Settings.",
+                _ => "Not authenticated. Click 'Connect' to sign in."
+            },
             "droid" => "Not authenticated. Click 'Connect' to sign in.",
             "antigravity" => "Not detected. Launch Antigravity IDE and sign in.",
             "zai" => "No API token. Enter your z.ai API token in Settings.",
             "minimax" => "No cookie configured. Paste your MiniMax cookie header in Settings.",
-            "augment" => "Not authenticated. Configure cookie in Settings or log in at app.augmentcode.com.",
+            "augment" => preference switch
+            {
+                AuthenticationStrategy.Manual => "No cookie configured. Paste your Augment cookie in Settings.",
+                AuthenticationStrategy.OAuth => "Not authenticated. Click 'Connect' to sign in.",
+                _ => "Not authenticated. Configure cookie in Settings or log in at app.augmentcode.com."
+            },
             _ => "Not configured. Set up this provider in Settings."
         };
+
+        return preference == AuthenticationStrategy.Auto ? baseMessage : baseMessage + strategyHint;
     }
     
     private static void Log(string message)

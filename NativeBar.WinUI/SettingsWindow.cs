@@ -36,8 +36,10 @@ public sealed class SettingsWindow : Window
     // Page instances (lazy-loaded)
     private GeneralSettingsPage? _generalPage;
     private ProvidersSettingsPage? _providersPage;
+    private ProviderOrderSettingsPage? _providerOrderPage;
     private AppearanceSettingsPage? _appearancePage;
     private NotificationsSettingsPage? _notificationsPage;
+    private CostTrackingSettingsPage? _costTrackingPage;
     private AboutSettingsPage? _aboutPage;
 
     public SettingsWindow(string? initialPage = null)
@@ -95,6 +97,8 @@ public sealed class SettingsWindow : Window
 
             _generalPage?.OnThemeChanged();
             _providersPage?.OnThemeChanged();
+            _providerOrderPage?.OnThemeChanged();
+            _costTrackingPage?.OnThemeChanged();
             _appearancePage?.OnThemeChanged();
             _notificationsPage?.OnThemeChanged();
             _aboutPage?.OnThemeChanged();
@@ -286,6 +290,8 @@ public sealed class SettingsWindow : Window
 
         _menuPanel.Children.Add(CreateMenuItem("General", "\uE713", true));
         _menuPanel.Children.Add(CreateMenuItem("Providers", "\uE774", false));
+        _menuPanel.Children.Add(CreateMenuItem("Provider Order", "\uE8A6", false));
+        _menuPanel.Children.Add(CreateMenuItem("Cost Tracking", "\uE9D9", false));
         _menuPanel.Children.Add(CreateMenuItem("Appearance", "\uE790", false));
         _menuPanel.Children.Add(CreateMenuItem("Notifications", "\uEA8F", false));
         _menuPanel.Children.Add(CreateMenuItem("About", "\uE946", false));
@@ -473,6 +479,8 @@ public sealed class SettingsWindow : Window
                 {
                     "General" => _generalPage ??= new GeneralSettingsPage(),
                     "Providers" => GetProvidersPage(),
+                    "Provider Order" => _providerOrderPage ??= new ProviderOrderSettingsPage(),
+                    "Cost Tracking" => _costTrackingPage ??= new CostTrackingSettingsPage(),
                     "Appearance" => GetAppearancePage(),
                     "Notifications" => _notificationsPage ??= new NotificationsSettingsPage(),
                     "About" => _aboutPage ??= new AboutSettingsPage(),

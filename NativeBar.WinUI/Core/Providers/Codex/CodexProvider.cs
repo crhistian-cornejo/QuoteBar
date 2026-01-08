@@ -37,6 +37,7 @@ public class CodexCLIStrategy : IProviderFetchStrategy
 {
     public string StrategyName => "CLI";
     public int Priority => 1; // Higher priority than RPC
+    public StrategyType Type => StrategyType.CLI;
 
     public async Task<bool> CanExecuteAsync()
     {
@@ -401,6 +402,7 @@ public class CodexRPCStrategy : IProviderFetchStrategy
 {
     public string StrategyName => "RPC";
     public int Priority => 2;
+    public StrategyType Type => StrategyType.AutoDetect;
 
     public async Task<bool> CanExecuteAsync()
     {

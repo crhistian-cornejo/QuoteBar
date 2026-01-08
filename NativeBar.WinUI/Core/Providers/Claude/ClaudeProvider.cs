@@ -43,6 +43,7 @@ public class ClaudeOAuthStrategy : IProviderFetchStrategy
 {
     public string StrategyName => "OAuth";
     public int Priority => 2; // Higher priority - try first
+    public StrategyType Type => StrategyType.OAuth;
 
     private ClaudeOAuthCredentials? _cachedCredentials;
 
@@ -142,6 +143,7 @@ public class ClaudeCLIStrategy : IProviderFetchStrategy
 {
     public string StrategyName => "CLI";
     public int Priority => 1; // Lower priority - fallback
+    public StrategyType Type => StrategyType.CLI;
 
     public async Task<bool> CanExecuteAsync()
     {

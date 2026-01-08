@@ -17,8 +17,10 @@ public class GeneralSettingsPage : ISettingsPage
 
     // UI controls
     private ToggleSwitch? _startupToggle;
+    private ToggleSwitch? _autoRefreshToggle;
     private ComboBox? _intervalCombo;
     private Slider? _hoverSlider;
+    private ToggleSwitch? _autoUpdateToggle;
     private ToggleSwitch? _hotkeyToggle;
     private ComboBox? _hotkeyCombo;
 
@@ -65,7 +67,7 @@ public class GeneralSettingsPage : ISettingsPage
                 "Automatically start QuoteBar when you log in to Windows",
                 _startupToggle));
 
-        // Refresh interval
+        // Refresh interval (initialize first so it can be referenced by the toggle)
         _intervalCombo = new ComboBox { Width = 150 };
         _intervalCombo.Items.Add("1 minute");
         _intervalCombo.Items.Add("5 minutes");
@@ -75,6 +77,7 @@ public class GeneralSettingsPage : ISettingsPage
         {
             1 => 0, 5 => 1, 15 => 2, 30 => 3, _ => 1
         };
+        _intervalCombo.IsEnabled = _settings.Settings.AutoRefreshEnabled;
         _intervalCombo.SelectionChanged += (s, e) =>
         {
             _settings.Settings.RefreshIntervalMinutes = _intervalCombo.SelectedIndex switch
@@ -83,6 +86,20 @@ public class GeneralSettingsPage : ISettingsPage
             };
             _settings.Save();
         };
+
+            // Auto-refresh toggle
+            _autoRefreshToggle = SettingCard.CreateToggleSwitch(_settings.Settings.AutoRefreshEnabled);
+            _autoRefreshToggle.Toggled += (s, e) =>
+            {
+                _settings.Settings.AutoRefreshEnabled = _autoRefreshToggle.IsOn;
+                _intervalCombo.IsEnabled = _autoRefreshToggle.IsOn;
+                _settings.Save();
+            };
+            stack.Children.Add(SettingCard.Create(
+                "Auto-refresh",
+                "Automatically refresh usage data at regular intervals",
+                _autoRefreshToggle));
+
         stack.Children.Add(SettingCard.Create(
             "Refresh interval",
             "How often to check for usage updates",
@@ -133,6 +150,18 @@ public class GeneralSettingsPage : ISettingsPage
             "Enable global hotkey",
             "Use a keyboard shortcut to toggle the popup from anywhere",
             _hotkeyToggle));
+
+        // Auto-check for updates toggle
+        _autoUpdateToggle = SettingCard.CreateToggleSwitch(_settings.Settings.AutoCheckForUpdates);
+        _autoUpdateToggle.Toggled += (s, e) =>
+        {
+            _settings.Settings.AutoCheckForUpdates = _autoUpdateToggle.IsOn;
+            _settings.Save();
+        };
+        stack.Children.Add(SettingCard.Create(
+            "Check for updates automatically",
+            "Periodically check for new versions and notify you",
+            _autoUpdateToggle));
 
         // Hotkey selection
         _hotkeyCombo = new ComboBox { Width = 180 };

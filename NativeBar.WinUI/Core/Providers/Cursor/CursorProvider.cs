@@ -42,6 +42,7 @@ public class CursorCachedStrategy : IProviderFetchStrategy
 {
     public string StrategyName => "Cached";
     public int Priority => 0; // Highest priority - no network needed
+    public StrategyType Type => StrategyType.Cached;
 
     public Task<bool> CanExecuteAsync()
     {
@@ -77,6 +78,7 @@ public class CursorManualCookieStrategy : IProviderFetchStrategy
 {
     public string StrategyName => "Manual Cookie";
     public int Priority => 1;
+    public StrategyType Type => StrategyType.Manual;
 
     public Task<bool> CanExecuteAsync()
     {
@@ -169,6 +171,7 @@ public class CursorStoredSessionStrategy : IProviderFetchStrategy
 {
     public string StrategyName => "Stored Session";
     public int Priority => 2;
+    public StrategyType Type => StrategyType.OAuth;
 
     public Task<bool> CanExecuteAsync()
     {

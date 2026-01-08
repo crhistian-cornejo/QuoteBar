@@ -33,6 +33,7 @@ public class ZaiAPIStrategy : IProviderFetchStrategy
 {
     public string StrategyName => "API";
     public int Priority => 1;
+    public StrategyType Type => StrategyType.Manual;
 
     public Task<bool> CanExecuteAsync()
     {

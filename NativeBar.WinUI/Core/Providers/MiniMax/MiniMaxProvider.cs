@@ -36,6 +36,7 @@ public class MiniMaxCookieStrategy : IProviderFetchStrategy
 {
     public string StrategyName => "Cookie";
     public int Priority => 1;
+    public StrategyType Type => StrategyType.Manual;
 
     public Task<bool> CanExecuteAsync()
     {

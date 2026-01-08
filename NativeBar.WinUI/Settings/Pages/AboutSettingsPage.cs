@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using NativeBar.WinUI.Controls;
 using NativeBar.WinUI.Core.Services;
 using NativeBar.WinUI.Settings.Controls;
 
@@ -55,7 +56,7 @@ public class AboutSettingsPage : ISettingsPage
 
         infoStack.Children.Add(new TextBlock
         {
-            Text = "Version 1.0.0",
+            Text = $"Version {GetAppVersion()}",
             FontSize = 14,
             Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
             HorizontalAlignment = HorizontalAlignment.Center
@@ -95,19 +96,7 @@ public class AboutSettingsPage : ISettingsPage
             Margin = new Thickness(0, 8, 0, 0),
             Padding = new Thickness(16, 8, 16, 8)
         };
-        updateButton.Click += async (s, e) =>
-        {
-            if (_content?.XamlRoot == null) return;
-            
-            var dialog = new ContentDialog
-            {
-                Title = "Check for Updates",
-                Content = "You are running the latest version of NativeBar!",
-                CloseButtonText = "OK",
-                XamlRoot = _content.XamlRoot
-            };
-            await dialog.ShowAsync();
-        };
+        updateButton.Click += async (s, e) => await CheckForUpdatesAsync();
         stack.Children.Add(updateButton);
 
         scroll.Content = stack;
@@ -167,8 +156,73 @@ public class AboutSettingsPage : ISettingsPage
             Content = text,
             NavigateUri = new Uri(url),
             Foreground = new SolidColorBrush(_theme.AccentColor),
-            Padding = new Thickness(8, 4, 8, 4)
+            Padding = new Thickness(8,4, 8,4)
         };
+    }
+
+    private static string GetAppVersion()
+    {
+        var version = typeof(App).Assembly.GetName().Version;
+        return version?.ToString(3) ?? "1.0.0";
+    }
+
+    private async Task CheckForUpdatesAsync()
+    {
+        if (_content?.XamlRoot == null) return;
+
+        try
+        {
+            var loadingDialog = new ContentDialog
+            {
+                Title = "Checking for Updates",
+                Content = "Please wait...",
+                CloseButtonText = "Cancel",
+                XamlRoot = _content.XamlRoot
+            };
+
+            var checkTask = UpdateService.Instance.CheckForUpdatesAsync(force: true);
+            var delayTask = Task.Delay(100);
+
+            await Task.WhenAny(checkTask, delayTask);
+
+            if (!checkTask.IsCompleted)
+            {
+                await loadingDialog.ShowAsync();
+            }
+
+            var release = await checkTask;
+
+            if (release != null)
+            {
+                var updateDialog = new UpdateDialog(_content.XamlRoot);
+                updateDialog.SetRelease(release);
+                await updateDialog.ShowAsync();
+            }
+            else
+            {
+                var dialog = new ContentDialog
+                {
+                    Title = "Up to Date",
+                    Content = $"You're running the latest version of QuoteBar ({GetAppVersion()})!",
+                    CloseButtonText = "OK",
+                    XamlRoot = _content.XamlRoot
+                };
+                await dialog.ShowAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("AboutSettingsPage", "Update check failed", ex);
+
+            var errorDialog = new ContentDialog
+            {
+                Title = "Error",
+                Content = $"Failed to check for updates: {ex.Message}",
+                CloseButtonText = "OK",
+                XamlRoot = _content.XamlRoot
+            };
+            await errorDialog.ShowAsync();
+        }
     }
 
     public void OnThemeChanged()

@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using NativeBar.WinUI.Core.CostUsage;
 using NativeBar.WinUI.Core.Models;
 using NativeBar.WinUI.Core.Services;
 
@@ -174,6 +175,11 @@ public sealed class CopilotUsageData
     /// Usage amount for the top model
     /// </summary>
     public double TopModelUsage { get; set; }
+    
+    /// <summary>
+    /// Estimated cost in USD based on model usage
+    /// </summary>
+    public double EstimatedCostUSD { get; set; }
 }
 
 /// <summary>
@@ -393,12 +399,36 @@ public static class CopilotUsageFetcher
             };
         }
 
+        // Build cost info from billing data
+        ProviderCost? cost = null;
+        var estimatedCost = billingData.EstimatedCostUSD;
+        var billedCost = billingData.TotalBilledAmount;
+        
+        if (estimatedCost > 0 || billedCost > 0 || totalUsed > 0)
+        {
+            cost = new ProviderCost
+            {
+                SessionCostUSD = null,
+                SessionTokens = null,
+                TotalCostUSD = estimatedCost > 0 ? estimatedCost : billedCost,
+                TotalTokens = (int)totalUsed,
+                StartDate = DateTime.UtcNow.Date.AddDays(-DateTime.UtcNow.Day + 1),
+                EndDate = DateTime.UtcNow,
+                CostBreakdown = new Dictionary<string, double>
+                {
+                    ["Estimated"] = estimatedCost,
+                    ["Billed (overage)"] = billedCost
+                }
+            };
+        }
+
         return new UsageSnapshot
         {
             ProviderId = internalResult.ProviderId,
             Primary = primary,
             Secondary = secondary ?? internalResult.Secondary,
             Tertiary = tertiary ?? internalResult.Tertiary,
+            Cost = cost,
             Identity = internalResult.Identity,
             FetchedAt = internalResult.FetchedAt
         };
@@ -613,13 +643,24 @@ public static class CopilotUsageFetcher
             
             Log($"Total models tracked: {usageData.ModelUsage.Count}");
             
-            // Find top model
+            // Find top model and calculate estimated cost
             if (usageData.ModelUsage.Count > 0)
             {
                 var topModel = usageData.ModelUsage.OrderByDescending(m => m.Value).First();
                 usageData.TopModel = topModel.Key;
                 usageData.TopModelUsage = topModel.Value;
                 Log($"Top model selected: {usageData.TopModel} with {usageData.TopModelUsage} requests");
+                
+                // Calculate estimated cost based on model-specific pricing
+                double estimatedCost = 0;
+                foreach (var (model, requests) in usageData.ModelUsage)
+                {
+                    var modelCost = CostUsage.CostUsagePricing.CopilotCostUSD(model, requests) ?? 0;
+                    estimatedCost += modelCost;
+                    Log($"    -> Model cost: {model} = {requests} requests * pricing = ${modelCost:F2}");
+                }
+                usageData.EstimatedCostUSD = estimatedCost;
+                Log($"Total estimated cost: ${estimatedCost:F2}");
             }
             else
             {
@@ -638,6 +679,19 @@ public static class CopilotUsageFetcher
         usageData.ResetsAt = CalculateNextResetDate();
 
         Log($"Usage data: Used={usageData.TotalPremiumRequestsUsed}, Limit={usageData.IncludedRequestsLimit}, Plan={usageData.DetectedPlanType}, Resets={usageData.ResetsAt}");
+
+        // Save to cost tracking cache for Cost Tracking page
+        if (usageData.ModelUsage.Count > 0)
+        {
+            try
+            {
+                CostUsage.CostUsageFetcher.Instance.SaveCopilotUsageData(DateTime.UtcNow, usageData.ModelUsage);
+            }
+            catch (Exception ex)
+            {
+                Log($"Failed to save cost tracking data: {ex.Message}");
+            }
+        }
 
         return usageData;
     }
@@ -945,12 +999,36 @@ public static class CopilotUsageFetcher
             AccountId = usageData.User?.Login ?? credentials?.Username
         };
 
+        // Build cost info - show estimated cost based on model usage
+        ProviderCost? cost = null;
+        var estimatedCost = usageData.EstimatedCostUSD;
+        var billedCost = usageData.TotalBilledAmount;
+        
+        if (estimatedCost > 0 || billedCost > 0 || usageData.TotalPremiumRequestsUsed > 0)
+        {
+            cost = new ProviderCost
+            {
+                SessionCostUSD = null, // No session granularity for Copilot
+                SessionTokens = null,
+                TotalCostUSD = estimatedCost > 0 ? estimatedCost : billedCost, // Show estimated cost, fallback to billed
+                TotalTokens = (int)usageData.TotalPremiumRequestsUsed,
+                StartDate = DateTime.UtcNow.Date.AddDays(-DateTime.UtcNow.Day + 1),
+                EndDate = DateTime.UtcNow,
+                CostBreakdown = new Dictionary<string, double>
+                {
+                    ["Estimated"] = estimatedCost,
+                    ["Billed (overage)"] = billedCost
+                }
+            };
+        }
+
         return new UsageSnapshot
         {
             ProviderId = "copilot",
             Primary = primary,
             Secondary = secondary,
             Tertiary = tertiary,
+            Cost = cost,
             Identity = identity,
             FetchedAt = DateTime.UtcNow
         };

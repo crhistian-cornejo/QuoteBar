@@ -32,6 +32,7 @@ public class GeminiOAuthStrategy : IProviderFetchStrategy
 {
     public string StrategyName => "OAuth";
     public int Priority => 2; // Higher priority
+    public StrategyType Type => StrategyType.OAuth;
 
     public async Task<bool> CanExecuteAsync()
     {
@@ -94,6 +95,7 @@ public class GeminiCLIStrategy : IProviderFetchStrategy
 {
     public string StrategyName => "CLI";
     public int Priority => 1; // Lower priority - fallback
+    public StrategyType Type => StrategyType.CLI;
 
     public async Task<bool> CanExecuteAsync()
     {

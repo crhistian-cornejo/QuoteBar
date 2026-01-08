@@ -283,15 +283,24 @@ public sealed class CursorStatusSnapshot
             };
         }
 
-        // Provider cost snapshot for on-demand usage
+        // Provider cost snapshot - show plan usage or on-demand
         ProviderCost? cost = null;
-        if (OnDemandUsedUSD > 0)
+        var totalCost = OnDemandUsedUSD + PlanUsedUSD;
+        if (totalCost > 0 || PlanLimitUSD > 0)
         {
             cost = new ProviderCost
             {
-                TotalCostUSD = OnDemandUsedUSD,
+                SessionCostUSD = null, // Cursor doesn't have session granularity
+                SessionTokens = null,
+                TotalCostUSD = totalCost,
+                TotalTokens = null,
                 StartDate = DateTime.UtcNow.Date.AddDays(-DateTime.UtcNow.Day + 1),
-                EndDate = DateTime.UtcNow
+                EndDate = DateTime.UtcNow,
+                CostBreakdown = new Dictionary<string, double>
+                {
+                    ["Plan Usage"] = PlanUsedUSD,
+                    ["On-Demand"] = OnDemandUsedUSD
+                }
             };
         }
 

@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using NativeBar.WinUI.Core.CostUsage;
 using NativeBar.WinUI.Core.Models;
 using NativeBar.WinUI.Core.Providers;
 using System.Collections.ObjectModel;
@@ -18,17 +19,60 @@ public partial class UsageStore : ObservableObject
     
     private readonly Dictionary<string, UsageSnapshot> _snapshots = new();
     private readonly Dictionary<string, UsageFetcher> _fetchers = new();
-    private readonly Timer _refreshTimer;
+    private Timer? _refreshTimer;
+    private readonly SettingsService _settings = SettingsService.Instance;
+    private readonly CostUsageFetcher _costFetcher = CostUsageFetcher.Instance;
 
     /// <summary>
     /// Event fired after all providers are refreshed (for tray badge updates)
     /// </summary>
     public event Action? AllProvidersRefreshed;
-    
+
     public UsageStore()
     {
         InitializeProviders();
-        _refreshTimer = new Timer(OnRefreshTimer, null, TimeSpan.Zero, TimeSpan.FromMinutes(5));
+
+        if (_settings.Settings.AutoRefreshEnabled)
+        {
+            StartRefreshTimer();
+        }
+
+        _settings.SettingsChanged += OnSettingsChanged;
+    }
+
+    private void StartRefreshTimer()
+    {
+        _refreshTimer?.Dispose();
+        var interval = TimeSpan.FromMinutes(_settings.Settings.RefreshIntervalMinutes);
+        _refreshTimer = new Timer(OnRefreshTimer, null, TimeSpan.Zero, interval);
+        DebugLogger.Log("UsageStore", $"Refresh timer started with {interval.TotalMinutes} min interval");
+    }
+
+    private void StopRefreshTimer()
+    {
+        _refreshTimer?.Dispose();
+        _refreshTimer = null;
+        DebugLogger.Log("UsageStore", "Refresh timer stopped (manual mode)");
+    }
+
+    private void OnSettingsChanged()
+    {
+        if (_settings.Settings.AutoRefreshEnabled)
+        {
+            if (_refreshTimer == null)
+            {
+                StartRefreshTimer();
+            }
+            else
+            {
+                StopRefreshTimer();
+                StartRefreshTimer();
+            }
+        }
+        else
+        {
+            StopRefreshTimer();
+        }
     }
     
     private void InitializeProviders()
@@ -86,6 +130,10 @@ public partial class UsageStore : ObservableObject
         try
         {
             var snapshot = await fetcher.FetchAsync();
+            
+            // Enrich with local cost data for supported providers
+            snapshot = await EnrichWithLocalCostDataAsync(providerId, snapshot);
+            
             _snapshots[providerId] = snapshot;
 
             // Check for usage alerts after successful fetch
@@ -109,6 +157,49 @@ public partial class UsageStore : ObservableObject
         }
         
         OnPropertyChanged(nameof(GetCurrentSnapshot));
+    }
+
+    /// <summary>
+    /// Enrich a snapshot with local cost data from CLI logs (Codex/Claude)
+    /// </summary>
+    private async Task<UsageSnapshot> EnrichWithLocalCostDataAsync(string providerId, UsageSnapshot snapshot)
+    {
+        try
+        {
+            CostUsageTokenSnapshot? costSnapshot = null;
+
+            // Get local cost data for supported providers
+            if (providerId.Equals("codex", StringComparison.OrdinalIgnoreCase))
+            {
+                costSnapshot = await _costFetcher.LoadTokenSnapshotAsync(CostUsageProvider.Codex);
+            }
+            else if (providerId.Equals("claude", StringComparison.OrdinalIgnoreCase))
+            {
+                costSnapshot = await _costFetcher.LoadTokenSnapshotAsync(CostUsageProvider.Claude);
+            }
+
+            if (costSnapshot != null && (costSnapshot.Last30DaysCostUSD > 0 || costSnapshot.Last30DaysTokens > 0))
+            {
+                // Create or update cost info
+                var cost = new ProviderCost
+                {
+                    SessionCostUSD = costSnapshot.SessionCostUSD,
+                    SessionTokens = costSnapshot.SessionTokens,
+                    TotalCostUSD = costSnapshot.Last30DaysCostUSD ?? 0,
+                    TotalTokens = costSnapshot.Last30DaysTokens,
+                    StartDate = DateTime.UtcNow.AddDays(-29),
+                    EndDate = DateTime.UtcNow
+                };
+
+                return snapshot with { Cost = cost };
+            }
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("UsageStore", $"Failed to enrich with local cost data for {providerId}", ex);
+        }
+
+        return snapshot;
     }
     
     public async Task RefreshAllAsync()

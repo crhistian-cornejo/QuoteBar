@@ -78,6 +78,9 @@ public class AppSettings
     public bool StartAtLogin { get; set; } = true;
     public bool ShowInTaskbar { get; set; } = false;
     public int RefreshIntervalMinutes { get; set; } = 5;
+    public bool AutoRefreshEnabled { get; set; } = true;
+    public bool AutoCheckForUpdates { get; set; } = true;
+    public DateTime LastUpdateCheckTime { get; set; } = default;
     public int HoverDelayMs { get; set; } = 300;
 
     // Appearance
@@ -101,6 +104,9 @@ public class AppSettings
 
     // Provider configs
     public Dictionary<string, ProviderConfig> Providers { get; set; } = new();
+
+    // Provider order in UI (for reordering feature)
+    public List<string> ProviderOrder { get; set; } = new();
 
     // Copilot-specific settings
     // Plan types: "auto", "free", "pro", "pro_plus"
@@ -126,6 +132,20 @@ public class AppSettings
         else
             EnabledProviders.Remove(id);
     }
+
+    /// <summary>
+    /// Get provider config, creating a new one if it doesn't exist
+    /// </summary>
+    public ProviderConfig GetProviderConfig(string providerId)
+    {
+        var id = providerId.ToLower();
+        if (!Providers.TryGetValue(id, out var config))
+        {
+            config = new ProviderConfig();
+            Providers[id] = config;
+        }
+        return config;
+    }
 }
 
 public enum ThemeMode
@@ -140,4 +160,14 @@ public class ProviderConfig
     public bool Enabled { get; set; } = true;
     public string? ApiKey { get; set; }
     public string? CliPath { get; set; }
+    /// <summary>
+    /// User's preferred authentication strategy for this provider.
+    /// Values: "Auto", "CLI", "OAuth", "Manual"
+    /// </summary>
+    public string PreferredStrategy { get; set; } = "Auto";
+
+    /// <summary>
+    /// Dynamic provider settings (key-value pairs)
+    /// </summary>
+    public Dictionary<string, string> Settings { get; set; } = new();
 }

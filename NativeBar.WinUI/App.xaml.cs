@@ -5,18 +5,19 @@ using NativeBar.WinUI.ViewModels;
 using NativeBar.WinUI.TrayPopup;
 using NativeBar.WinUI.Core.Services;
 using NativeBar.WinUI.Helpers;
+using NativeBar.WinUI.Controls;
 using Microsoft.Extensions.DependencyInjection;
 using System;
 using System.Runtime.InteropServices;
 using System.IO;
+using System.Threading.Tasks;
 
 namespace NativeBar.WinUI;
 
 public partial class App : Application
 {
     private Window? _hiddenWindow;
-    private MainWindow? _mainWindow;
-    private SettingsWindow? _settingsWindow;
+    private NativeBar.WinUI.SettingsWindow? _settingsWindow;
     private ServiceProvider? _serviceProvider;
     private NotifyIconHelper? _notifyIcon;
     private DispatcherQueue? _dispatcherQueue;
@@ -149,6 +150,18 @@ public partial class App : Application
                 DebugLogger.LogError("App", "Failed to start provider status polling", ex);
             }
 
+            // Initialize Update Service (checks GitHub releases)
+            try
+            {
+                UpdateService.Instance.UpdateAvailable += OnUpdateAvailable;
+                UpdateService.Instance.StartPeriodicChecks();
+                DebugLogger.Log("App", "Update service started");
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.LogError("App", "Failed to start update service", ex);
+            }
+
             // Activate and hide
             _hiddenWindow.Activate();
             ShowWindow(hwnd, 0);
@@ -171,6 +184,19 @@ public partial class App : Application
         catch (Exception ex)
         {
             DebugLogger.LogError("App", "LEFT CLICK ERROR", ex);
+        }
+    }
+
+    private void OnUpdateAvailable(GitHubRelease release)
+    {
+        try
+        {
+            DebugLogger.Log("App", $"Update available: {release.TagName}");
+            // Update notification is handled by UpdateService
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("App", "UPDATE AVAILABLE HANDLER ERROR", ex);
         }
     }
 
@@ -307,30 +333,6 @@ public partial class App : Application
         catch (Exception ex)
         {
             DebugLogger.LogError("App", "HIDE POPUP ERROR", ex);
-        }
-    }
-
-    private void ShowMainWindow()
-    {
-        try
-        {
-            if (_mainWindow == null)
-            {
-                _mainWindow = new MainWindow(_serviceProvider!);
-                _mainWindow.Closed += (s, e) =>
-                {
-                    DebugLogger.Log("App", "Main window closed");
-                    _mainWindow = null;
-                };
-            }
-
-            _mainWindow.Activate();
-            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(_mainWindow);
-            SetForegroundWindow(hwnd);
-        }
-        catch (Exception ex)
-        {
-            DebugLogger.LogError("App", "SHOW MAIN WINDOW ERROR", ex);
         }
     }
 

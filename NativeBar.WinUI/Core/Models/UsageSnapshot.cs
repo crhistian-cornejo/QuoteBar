@@ -30,13 +30,23 @@ public record ProviderIdentity
 }
 
 /// <summary>
-/// Cost tracking snapshot
+/// Cost tracking snapshot - CodexBar style with session and 30-day data
 /// </summary>
 public record ProviderCost
 {
+    // Current session (today)
+    public double? SessionCostUSD { get; init; }
+    public int? SessionTokens { get; init; }
+    
+    // 30-day rolling window
     public double TotalCostUSD { get; init; }
+    public int? TotalTokens { get; init; }
+    
+    // Period info
     public DateTime StartDate { get; init; }
     public DateTime EndDate { get; init; }
+    
+    // Model breakdown (model name -> cost)
     public Dictionary<string, double>? CostBreakdown { get; init; }
 }
 

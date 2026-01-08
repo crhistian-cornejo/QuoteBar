@@ -10,6 +10,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.ApplicationModel.DataTransfer;
 using Microsoft.UI.Xaml.Shapes;
+using NativeBar.WinUI.Core.Providers;
 using NativeBar.WinUI.Core.Providers.Claude;
 using NativeBar.WinUI.Core.Providers.Copilot;
 using NativeBar.WinUI.Core.Providers.Cursor;
@@ -103,16 +104,27 @@ public class ProvidersSettingsPage : ISettingsPage
             });
 
             // Provider cards (alphabetical order)
+            DebugLogger.Log("ProvidersSettingsPage", "Creating Antigravity card...");
             stack.Children.Add(CreateProviderCardWithAutoDetect("Antigravity", "antigravity", "#FF6B6B"));
+            DebugLogger.Log("ProvidersSettingsPage", "Creating Augment card...");
             stack.Children.Add(CreateProviderCardWithAutoDetect("Augment", "augment", "#3C3C3C"));
+            DebugLogger.Log("ProvidersSettingsPage", "Creating Claude card...");
             stack.Children.Add(CreateProviderCardWithAutoDetect("Claude", "claude", "#D97757"));
+            DebugLogger.Log("ProvidersSettingsPage", "Creating Codex card...");
             stack.Children.Add(CreateProviderCardWithAutoDetect("Codex", "codex", "#7C3AED"));
+            DebugLogger.Log("ProvidersSettingsPage", "Creating Copilot card...");
             stack.Children.Add(CreateProviderCardWithAutoDetect("Copilot", "copilot", "#24292F"));
+            DebugLogger.Log("ProvidersSettingsPage", "Creating Cursor card...");
             stack.Children.Add(CreateProviderCardWithAutoDetect("Cursor", "cursor", "#007AFF"));
+            DebugLogger.Log("ProvidersSettingsPage", "Creating Droid card...");
             stack.Children.Add(CreateProviderCardWithAutoDetect("Droid", "droid", "#EE6018"));
+            DebugLogger.Log("ProvidersSettingsPage", "Creating Gemini card...");
             stack.Children.Add(CreateProviderCardWithAutoDetect("Gemini", "gemini", "#4285F4"));
+            DebugLogger.Log("ProvidersSettingsPage", "Creating z.ai card...");
             stack.Children.Add(CreateZaiProviderCard());
-            stack.Children.Add(CreateMiniMaxProviderCard()); // MINIMAL TEST VERSION - moved after z.ai
+            DebugLogger.Log("ProvidersSettingsPage", "Creating MiniMax card...");
+            stack.Children.Add(CreateMiniMaxProviderCard());
+            DebugLogger.Log("ProvidersSettingsPage", "All cards created successfully");
 
             scroll.Content = stack;
             DebugLogger.Log("ProvidersSettingsPage", "CreateContent DONE");
@@ -259,10 +271,13 @@ public class ProvidersSettingsPage : ISettingsPage
             BorderThickness = new Thickness(1)
         };
 
-        var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var mainStack = new StackPanel { Spacing = 10 };
+
+        // Header row (icon, info, button)
+        var headerGrid = new Grid();
+        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         // Icon
         var iconElement = CreateProviderCardIcon(providerId, name, colorHex);
@@ -303,12 +318,152 @@ public class ProvidersSettingsPage : ISettingsPage
             : CreateConnectButton(name, providerId);
         Grid.SetColumn(buttonElement, 2);
 
-        grid.Children.Add(iconElement);
-        grid.Children.Add(infoStack);
-        grid.Children.Add(buttonElement);
-        card.Child = grid;
+        headerGrid.Children.Add(iconElement);
+        headerGrid.Children.Add(infoStack);
+        headerGrid.Children.Add(buttonElement);
+        mainStack.Children.Add(headerGrid);
+
+        // Strategy selector (only for providers with multiple strategies)
+        var strategySelector = CreateStrategySelector(providerId);
+        if (strategySelector != null)
+        {
+            mainStack.Children.Add(strategySelector);
+        }
+
+        card.Child = mainStack;
 
         return card;
+    }
+
+    /// <summary>
+    /// Creates a strategy selector (ComboBox) for providers with multiple authentication strategies
+    /// TEMPORARILY DISABLED to debug crash
+    /// </summary>
+    private FrameworkElement? CreateStrategySelector(string providerId)
+    {
+        // TEMPORARILY DISABLED to isolate crash source
+        // The ComboBox was causing WinUI rendering crashes
+        DebugLogger.Log("ProvidersSettingsPage", $"CreateStrategySelector DISABLED for {providerId}");
+        return null;
+
+        /*
+        try
+        {
+            DebugLogger.Log("ProvidersSettingsPage", $"CreateStrategySelector START for {providerId}");
+            var provider = ProviderRegistry.Instance.GetProvider(providerId);
+            if (provider == null)
+            {
+                DebugLogger.Log("ProvidersSettingsPage", $"CreateStrategySelector: provider {providerId} is null");
+                return null;
+            }
+
+            var availableStrategies = provider.AvailableStrategies;
+            DebugLogger.Log("ProvidersSettingsPage", $"CreateStrategySelector: {providerId} has {availableStrategies.Count} strategies");
+
+            // Only show selector if there are multiple options (more than just Auto)
+            if (availableStrategies.Count <= 1)
+            {
+                DebugLogger.Log("ProvidersSettingsPage", $"CreateStrategySelector: {providerId} skipped (only 1 strategy)");
+                return null;
+            }
+
+            var grid = new Grid { Margin = new Thickness(0, 4, 0, 0) };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            var label = new TextBlock
+            {
+                Text = "Auth method:",
+                FontSize = 12,
+                Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 10, 0)
+            };
+            Grid.SetColumn(label, 0);
+
+            var combo = new ComboBox
+            {
+                MinWidth = 120,
+                MaxWidth = 200,
+                Height = 28,
+                FontSize = 12,
+                Padding = new Thickness(8, 4, 8, 4),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            AutomationProperties.SetName(combo, $"Authentication method for {providerId}");
+
+            // Get current preference
+            var config = _settings.Settings.GetProviderConfig(providerId);
+            var currentPreference = config.PreferredStrategy ?? "Auto";
+
+            // Add items
+            foreach (var strategy in availableStrategies)
+            {
+                var displayName = GetStrategyDisplayName(strategy);
+                combo.Items.Add(displayName);
+
+                if (strategy.ToString().Equals(currentPreference, StringComparison.OrdinalIgnoreCase))
+                {
+                    combo.SelectedIndex = combo.Items.Count - 1;
+                }
+            }
+
+            // Select first if none matched
+            if (combo.SelectedIndex < 0 && combo.Items.Count > 0)
+            {
+                combo.SelectedIndex = 0;
+            }
+
+            combo.SelectionChanged += (s, e) =>
+            {
+                try
+                {
+                    if (combo.SelectedIndex >= 0 && combo.SelectedIndex < availableStrategies.Count)
+                    {
+                        var selectedStrategy = availableStrategies[combo.SelectedIndex];
+                        var providerConfig = _settings.Settings.GetProviderConfig(providerId);
+                        providerConfig.PreferredStrategy = selectedStrategy.ToString();
+                        _settings.Save();
+
+                        DebugLogger.Log("ProvidersSettingsPage",
+                            $"Changed auth strategy for {providerId} to {selectedStrategy}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    DebugLogger.LogError("ProvidersSettingsPage", $"Strategy selection error for {providerId}", ex);
+                }
+            };
+
+            Grid.SetColumn(combo, 1);
+
+            grid.Children.Add(label);
+            grid.Children.Add(combo);
+
+            DebugLogger.Log("ProvidersSettingsPage", $"CreateStrategySelector DONE for {providerId}");
+            return grid;
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("ProvidersSettingsPage", $"CreateStrategySelector({providerId}) failed", ex);
+            return null;
+        }
+        */
+    }
+
+    /// <summary>
+    /// Get user-friendly display name for authentication strategy
+    /// </summary>
+    private static string GetStrategyDisplayName(AuthenticationStrategy strategy)
+    {
+        return strategy switch
+        {
+            AuthenticationStrategy.Auto => "Auto (recommended)",
+            AuthenticationStrategy.CLI => "CLI only",
+            AuthenticationStrategy.OAuth => "OAuth/Web only",
+            AuthenticationStrategy.Manual => "Manual cookie only",
+            _ => strategy.ToString()
+        };
     }
 
     private Button CreateOptionsButton(string name, string providerId)
@@ -321,7 +476,7 @@ public class ProvidersSettingsPage : ISettingsPage
         {
             try
             {
-                var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+                var usageStore = (Application.Current as NativeBar.WinUI.App)?.Services?.GetService(typeof(UsageStore)) as UsageStore;
                 if (usageStore != null)
                 {
                     await usageStore.RefreshAsync(providerId);
@@ -394,6 +549,8 @@ public class ProvidersSettingsPage : ISettingsPage
 
     private async Task ShowConnectDialogAsync(string name, string providerId)
     {
+        DebugLogger.Log("ProvidersSettingsPage", $"ShowConnectDialogAsync called for {providerId}");
+
         // Special handling for OAuth providers
         if (providerId.ToLower() == "copilot")
         {
@@ -413,6 +570,17 @@ public class ProvidersSettingsPage : ISettingsPage
         if (providerId.ToLower() == "augment")
         {
             await LaunchAugmentLoginAsync();
+            return;
+        }
+        // Special handling for cookie/token-based providers
+        if (providerId.ToLower() == "minimax")
+        {
+            await ShowMiniMaxConnectDialogAsync();
+            return;
+        }
+        if (providerId.ToLower() == "zai")
+        {
+            await ShowZaiConnectDialogAsync();
             return;
         }
 
@@ -439,7 +607,7 @@ public class ProvidersSettingsPage : ISettingsPage
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.Primary)
         {
-            var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+            var usageStore = (Application.Current as NativeBar.WinUI.App)?.Services?.GetService(typeof(UsageStore)) as UsageStore;
             if (usageStore != null)
             {
                 try { await usageStore.RefreshAsync(providerId); }
@@ -456,7 +624,7 @@ public class ProvidersSettingsPage : ISettingsPage
             var result = await CopilotLoginHelper.LaunchLoginAsync();
             if (result.IsSuccess)
             {
-                var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+                var usageStore = (Application.Current as NativeBar.WinUI.App)?.Services?.GetService(typeof(UsageStore)) as UsageStore;
                 if (usageStore != null) await usageStore.RefreshAsync("copilot");
                 await Task.Delay(500);
                 RequestRefresh?.Invoke();
@@ -475,7 +643,7 @@ public class ProvidersSettingsPage : ISettingsPage
             var result = await CursorLoginHelper.LaunchLoginAsync();
             if (result.IsSuccess)
             {
-                var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+                var usageStore = (Application.Current as NativeBar.WinUI.App)?.Services?.GetService(typeof(UsageStore)) as UsageStore;
                 if (usageStore != null) await usageStore.RefreshAsync("cursor");
                 await Task.Delay(500);
                 RequestRefresh?.Invoke();
@@ -494,7 +662,7 @@ public class ProvidersSettingsPage : ISettingsPage
             var result = await DroidLoginHelper.LaunchLoginAsync();
             if (result.IsSuccess)
             {
-                var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+                var usageStore = (Application.Current as NativeBar.WinUI.App)?.Services?.GetService(typeof(UsageStore)) as UsageStore;
                 if (usageStore != null) await usageStore.RefreshAsync("droid");
                 await Task.Delay(500);
                 RequestRefresh?.Invoke();
@@ -513,7 +681,7 @@ public class ProvidersSettingsPage : ISettingsPage
             var result = await AugmentLoginHelper.LaunchLoginAsync();
             if (result.IsSuccess)
             {
-                var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+                var usageStore = (Application.Current as NativeBar.WinUI.App)?.Services?.GetService(typeof(UsageStore)) as UsageStore;
                 if (usageStore != null) await usageStore.RefreshAsync("augment");
                 await Task.Delay(500);
                 RequestRefresh?.Invoke();
@@ -522,6 +690,180 @@ public class ProvidersSettingsPage : ISettingsPage
         catch (Exception ex)
         {
             DebugLogger.LogError("ProvidersSettingsPage", "LaunchAugmentLoginAsync failed", ex);
+        }
+    }
+
+    private async Task ShowMiniMaxConnectDialogAsync()
+    {
+        DebugLogger.Log("ProvidersSettingsPage", "ShowMiniMaxConnectDialogAsync called");
+        if (_content?.XamlRoot == null)
+        {
+            DebugLogger.Log("ProvidersSettingsPage", "ShowMiniMaxConnectDialogAsync: _content or XamlRoot is null, aborting");
+            return;
+        }
+
+        // Create dialog content with input field
+        var contentStack = new StackPanel { Spacing = 12, MinWidth = 400 };
+
+        contentStack.Children.Add(new TextBlock
+        {
+            Text = "To connect MiniMax:\n\n1. Go to platform.minimax.io and log in\n2. Open DevTools (F12) → Network tab\n3. Make any request and copy the 'Cookie' header\n4. Paste it below",
+            TextWrapping = TextWrapping.Wrap
+        });
+
+        var inputBox = new TextBox
+        {
+            PlaceholderText = "Paste your MiniMax cookie header here...",
+            AcceptsReturn = false,
+            TextWrapping = TextWrapping.NoWrap,
+            Height = 32
+        };
+        contentStack.Children.Add(inputBox);
+
+        // Paste from clipboard button
+        var pasteButton = new Button { Content = "Paste from Clipboard", Margin = new Thickness(0, 4, 0, 0) };
+        pasteButton.Click += async (s, e) =>
+        {
+            try
+            {
+                var data = Clipboard.GetContent();
+                if (data.Contains(StandardDataFormats.Text))
+                {
+                    var text = await data.GetTextAsync();
+                    if (!string.IsNullOrWhiteSpace(text))
+                        inputBox.Text = text.Trim();
+                }
+            }
+            catch { }
+        };
+        contentStack.Children.Add(pasteButton);
+
+        contentStack.Children.Add(new TextBlock
+        {
+            Text = "Cookie is stored securely in Windows Credential Manager.",
+            FontSize = 11,
+            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
+            Opacity = 0.7
+        });
+
+        var dialog = new ContentDialog
+        {
+            Title = "Connect MiniMax",
+            Content = contentStack,
+            PrimaryButtonText = "Save",
+            SecondaryButtonText = "Open MiniMax",
+            CloseButtonText = "Cancel",
+            XamlRoot = _content.XamlRoot
+        };
+
+        dialog.SecondaryButtonClick += (s, e) =>
+        {
+            try { Process.Start(new ProcessStartInfo("https://platform.minimax.io/user-center/payment/coding-plan?cycle_type=3") { UseShellExecute = true }); }
+            catch { }
+            e.Cancel = true; // Don't close the dialog
+        };
+
+        var result = await dialog.ShowAsync();
+        if (result == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(inputBox.Text))
+        {
+            var success = MiniMaxSettingsReader.StoreCookieHeader(inputBox.Text.Trim());
+            if (success)
+            {
+                var usageStore = (Application.Current as NativeBar.WinUI.App)?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+                if (usageStore != null)
+                {
+                    try { await usageStore.RefreshAsync("minimax"); }
+                    catch { }
+                }
+                RequestRefresh?.Invoke();
+            }
+        }
+    }
+
+    private async Task ShowZaiConnectDialogAsync()
+    {
+        DebugLogger.Log("ProvidersSettingsPage", "ShowZaiConnectDialogAsync called");
+        if (_content?.XamlRoot == null)
+        {
+            DebugLogger.Log("ProvidersSettingsPage", "ShowZaiConnectDialogAsync: _content or XamlRoot is null, aborting");
+            return;
+        }
+
+        // Create dialog content with input field
+        var contentStack = new StackPanel { Spacing = 12, MinWidth = 400 };
+
+        contentStack.Children.Add(new TextBlock
+        {
+            Text = "To connect z.ai:\n\n1. Go to z.ai/manage-apikey/subscription\n2. Copy your API token\n3. Paste it below",
+            TextWrapping = TextWrapping.Wrap
+        });
+
+        var inputBox = new TextBox
+        {
+            PlaceholderText = "Paste your z.ai API token here...",
+            AcceptsReturn = false,
+            TextWrapping = TextWrapping.NoWrap,
+            Height = 32
+        };
+        contentStack.Children.Add(inputBox);
+
+        // Paste from clipboard button
+        var pasteButton = new Button { Content = "Paste from Clipboard", Margin = new Thickness(0, 4, 0, 0) };
+        pasteButton.Click += async (s, e) =>
+        {
+            try
+            {
+                var data = Clipboard.GetContent();
+                if (data.Contains(StandardDataFormats.Text))
+                {
+                    var text = await data.GetTextAsync();
+                    if (!string.IsNullOrWhiteSpace(text))
+                        inputBox.Text = text.Trim();
+                }
+            }
+            catch { }
+        };
+        contentStack.Children.Add(pasteButton);
+
+        contentStack.Children.Add(new TextBlock
+        {
+            Text = "Token is stored securely in Windows Credential Manager.",
+            FontSize = 11,
+            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
+            Opacity = 0.7
+        });
+
+        var dialog = new ContentDialog
+        {
+            Title = "Connect z.ai",
+            Content = contentStack,
+            PrimaryButtonText = "Save",
+            SecondaryButtonText = "Get Token",
+            CloseButtonText = "Cancel",
+            XamlRoot = _content.XamlRoot
+        };
+
+        dialog.SecondaryButtonClick += (s, e) =>
+        {
+            try { Process.Start(new ProcessStartInfo("https://z.ai/manage-apikey/subscription") { UseShellExecute = true }); }
+            catch { }
+            e.Cancel = true; // Don't close the dialog
+        };
+
+        var result = await dialog.ShowAsync();
+        if (result == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(inputBox.Text))
+        {
+            var success = ZaiSettingsReader.StoreApiToken(inputBox.Text.Trim());
+            if (success)
+            {
+                var usageStore = (Application.Current as NativeBar.WinUI.App)?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+                if (usageStore != null)
+                {
+                    try { await usageStore.RefreshAsync("zai"); }
+                    catch { }
+                }
+                RequestRefresh?.Invoke();
+            }
         }
     }
 
@@ -565,7 +907,7 @@ public class ProvidersSettingsPage : ISettingsPage
     {
         try
         {
-            var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+            var usageStore = (Application.Current as NativeBar.WinUI.App)?.Services?.GetService(typeof(UsageStore)) as UsageStore;
             var snapshot = usageStore?.GetSnapshot(providerId);
 
             if (snapshot != null && snapshot.ErrorMessage == null && !snapshot.IsLoading && snapshot.Primary != null)
@@ -712,8 +1054,50 @@ public class ProvidersSettingsPage : ISettingsPage
 
     private Border CreateMiniMaxProviderCard()
     {
-        // TEST: Hardcoded false + TextBox to test if HasCookieHeader() causes the crash
-        var hasCookie = false; // MiniMaxSettingsReader.HasCookieHeader();
+        // SIMPLIFIED VERSION to debug WinUI crash
+        // Using same pattern as CreateProviderCardWithAutoDetect
+        return CreateProviderCardWithAutoDetect("MiniMax", "minimax", "#E2167E");
+    }
+
+    private Border CreateMiniMaxProviderCardOld()
+    {
+        try
+        {
+            return CreateMiniMaxProviderCardInternal();
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("ProvidersSettingsPage", "CreateMiniMaxProviderCard CRASHED", ex);
+            return new Border
+            {
+                Background = new SolidColorBrush(_theme.CardColor),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(16),
+                Margin = new Thickness(0, 0, 0, 6),
+                BorderBrush = new SolidColorBrush(_theme.BorderColor),
+                BorderThickness = new Thickness(1),
+                Child = new TextBlock
+                {
+                    Text = $"Error loading MiniMax: {ex.Message}",
+                    Foreground = new SolidColorBrush(Colors.Red),
+                    TextWrapping = TextWrapping.Wrap
+                }
+            };
+        }
+    }
+
+    private Border CreateMiniMaxProviderCardInternal()
+    {
+        bool hasCookie;
+        try
+        {
+            hasCookie = MiniMaxSettingsReader.HasCookieHeader();
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("ProvidersSettingsPage", "HasCookieHeader check failed", ex);
+            hasCookie = false;
+        }
 
         var card = new Border
         {
@@ -732,7 +1116,8 @@ public class ProvidersSettingsPage : ISettingsPage
         headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        var iconBorder = new Border
+        // Icon - always use letter fallback to avoid SVG issues
+        var iconElement = new Border
         {
             Width = 36,
             Height = 36,
@@ -748,7 +1133,7 @@ public class ProvidersSettingsPage : ISettingsPage
                 VerticalAlignment = VerticalAlignment.Center
             }
         };
-        Grid.SetColumn(iconBorder, 0);
+        Grid.SetColumn(iconElement, 0);
 
         var infoStack = new StackPanel
         {
@@ -771,25 +1156,164 @@ public class ProvidersSettingsPage : ISettingsPage
         });
         statusStack.Children.Add(new TextBlock
         {
-            Text = hasCookie ? "Cookie configured" : "Not configured",
+            Text = hasCookie ? "Cookie configured (secure)" : "Not configured",
             FontSize = 12,
             Foreground = new SolidColorBrush(_theme.SecondaryTextColor)
         });
         infoStack.Children.Add(statusStack);
         Grid.SetColumn(infoStack, 1);
 
-        headerGrid.Children.Add(iconBorder);
+        headerGrid.Children.Add(iconElement);
         headerGrid.Children.Add(infoStack);
         mainStack.Children.Add(headerGrid);
 
-        // TEST: TextBox with hardcoded hasCookie=false
-        mainStack.Children.Add(new TextBox { PlaceholderText = "Test TextBox", Height = 32 });
+        // Cookie input section
+        var cookieSection = new StackPanel { Spacing = 10 };
 
+        // Simple TextBox for cookie input (PasswordBox causes WinUI crashes)
+        var cookieBox = new TextBox
+        {
+            PlaceholderText = hasCookie ? "Cookie saved - paste new to replace" : "Paste your MiniMax cookie header",
+            Height = 32,
+            AcceptsReturn = false,
+            TextWrapping = TextWrapping.NoWrap
+        };
+        AutomationProperties.SetName(cookieBox, "MiniMax cookie header");
+        cookieSection.Children.Add(cookieBox);
+
+        // Row 2: actions
+        var actionsRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+
+        var pasteButton = new Button
+        {
+            Content = "Paste",
+            Height = 30
+        };
+        AutomationProperties.SetName(pasteButton, "Paste cookie from clipboard");
+        pasteButton.Click += async (s, e) =>
+        {
+            try
+            {
+                var data = Clipboard.GetContent();
+                if (data.Contains(StandardDataFormats.Text))
+                {
+                    var text = await data.GetTextAsync();
+                    if (!string.IsNullOrWhiteSpace(text))
+                        cookieBox.Text = text.Trim();
+                }
+            }
+            catch
+            {
+                // Ignore clipboard failures
+            }
+        };
+
+        var saveButton = new Button
+        {
+            Content = "Save",
+            Padding = new Thickness(16, 4, 16, 4),
+            Background = new SolidColorBrush(_theme.AccentColor),
+            Foreground = new SolidColorBrush(Colors.White),
+            Height = 30
+        };
+        AutomationProperties.SetName(saveButton, "Save MiniMax cookie");
+        saveButton.Click += async (s, e) =>
+        {
+            var cookie = string.IsNullOrWhiteSpace(cookieBox.Text) ? null : cookieBox.Text?.Trim();
+
+            // Show saving state
+            saveButton.IsEnabled = false;
+            saveButton.Content = "Saving...";
+
+            try
+            {
+                var success = MiniMaxSettingsReader.StoreCookieHeader(cookie);
+
+                if (_content?.XamlRoot != null)
+                {
+                    string title, message;
+                    if (!success)
+                    {
+                        title = "Error";
+                        message = "Failed to save cookie to Windows Credential Manager.";
+                    }
+                    else if (string.IsNullOrWhiteSpace(cookie))
+                    {
+                        title = "Cookie Cleared";
+                        message = "MiniMax cookie removed from secure storage.";
+                    }
+                    else
+                    {
+                        title = "Cookie Saved Successfully";
+                        message = "Your MiniMax cookie has been saved securely.\n\nUsage data will be refreshed automatically.";
+                    }
+
+                    var dialog = new ContentDialog
+                    {
+                        Title = title,
+                        Content = message,
+                        CloseButtonText = "OK",
+                        XamlRoot = _content.XamlRoot
+                    };
+                    await dialog.ShowAsync();
+                }
+
+                cookieBox.Text = "";
+
+                // Trigger data refresh
+                var usageStore = (Application.Current as NativeBar.WinUI.App)?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+                if (usageStore != null && !string.IsNullOrWhiteSpace(cookie))
+                {
+                    await usageStore.RefreshAsync("minimax");
+                }
+
+                RequestRefresh?.Invoke();
+            }
+            finally
+            {
+                saveButton.IsEnabled = true;
+                saveButton.Content = "Save";
+            }
+        };
+
+        var openLink = new HyperlinkButton
+        {
+            Content = "Open Coding Plan",
+            NavigateUri = new Uri("https://platform.minimax.io/user-center/payment/coding-plan?cycle_type=3"),
+            FontSize = 12,
+            Foreground = new SolidColorBrush(_theme.SecondaryTextColor)
+        };
+        AutomationProperties.SetName(openLink, "Open MiniMax Coding Plan page");
+
+        actionsRow.Children.Add(pasteButton);
+        actionsRow.Children.Add(saveButton);
+        actionsRow.Children.Add(openLink);
+        cookieSection.Children.Add(actionsRow);
+
+        // Help text
+        cookieSection.Children.Add(new TextBlock
+        {
+            Text = "Cookie is stored securely in Windows Credential Manager.\nGet cookie from DevTools: Network tab → copy 'Cookie' header from any API request.",
+            FontSize = 11,
+            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
+            TextWrapping = TextWrapping.Wrap,
+            Opacity = 0.7
+        });
+
+        mainStack.Children.Add(cookieSection);
         card.Child = mainStack;
+
         return card;
     }
 
     private Border CreateZaiProviderCard()
+    {
+        // SIMPLIFIED VERSION to debug WinUI crash
+        // Using same pattern as CreateProviderCardWithAutoDetect
+        return CreateProviderCardWithAutoDetect("z.ai", "zai", "#E85A6A");
+    }
+
+    private Border CreateZaiProviderCardFull()
     {
         var hasToken = ZaiSettingsReader.HasApiToken();
 
@@ -867,35 +1391,16 @@ public class ProvidersSettingsPage : ISettingsPage
         var tokenSection = new StackPanel { Spacing = 10 };
 
         // Row 1: token box (full width)
-        var tokenRow = new Grid();
-        tokenRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        tokenRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        var tokenBox = new PasswordBox
+        // Using TextBox instead of PasswordBox to avoid WinUI rendering crashes
+        var tokenBox = new TextBox
         {
             PlaceholderText = hasToken ? "Token saved - paste new to replace" : "Paste your z.ai API token",
             Height = 32,
-            MinWidth = 360
+            AcceptsReturn = false,
+            TextWrapping = TextWrapping.NoWrap
         };
-        Grid.SetColumn(tokenBox, 0);
-
-        var toggleRevealButton = new Button
-        {
-            Content = "Show",
-            Margin = new Thickness(8, 0, 0, 0),
-            Height = 32
-        };
-        toggleRevealButton.Click += (s, e) =>
-        {
-            var isHidden = tokenBox.PasswordRevealMode != PasswordRevealMode.Visible;
-            tokenBox.PasswordRevealMode = isHidden ? PasswordRevealMode.Visible : PasswordRevealMode.Hidden;
-            toggleRevealButton.Content = isHidden ? "Hide" : "Show";
-        };
-        Grid.SetColumn(toggleRevealButton, 1);
-
-        tokenRow.Children.Add(tokenBox);
-        tokenRow.Children.Add(toggleRevealButton);
-        tokenSection.Children.Add(tokenRow);
+        AutomationProperties.SetName(tokenBox, "z.ai API token");
+        tokenSection.Children.Add(tokenBox);
 
         // Row 2: actions
         var actionsRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
@@ -914,7 +1419,7 @@ public class ProvidersSettingsPage : ISettingsPage
                 {
                     var text = await data.GetTextAsync();
                     if (!string.IsNullOrWhiteSpace(text))
-                        tokenBox.Password = text.Trim();
+                        tokenBox.Text = text.Trim();
                 }
             }
             catch
@@ -933,7 +1438,7 @@ public class ProvidersSettingsPage : ISettingsPage
         };
         saveButton.Click += async (s, e) =>
         {
-            var token = string.IsNullOrWhiteSpace(tokenBox.Password) ? null : tokenBox.Password;
+            var token = string.IsNullOrWhiteSpace(tokenBox.Text) ? null : tokenBox.Text?.Trim();
 
             // Show saving state
             saveButton.IsEnabled = false;
@@ -972,12 +1477,10 @@ public class ProvidersSettingsPage : ISettingsPage
                     await dialog.ShowAsync();
                 }
 
-                tokenBox.Password = "";
-                tokenBox.PasswordRevealMode = PasswordRevealMode.Hidden;
-                toggleRevealButton.Content = "Show";
+                tokenBox.Text = "";
 
                 // Trigger data refresh
-                var usageStore = App.Current?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+                var usageStore = (Application.Current as NativeBar.WinUI.App)?.Services?.GetService(typeof(UsageStore)) as UsageStore;
                 if (usageStore != null && !string.IsNullOrWhiteSpace(token))
                 {
                     await usageStore.RefreshAsync("zai");

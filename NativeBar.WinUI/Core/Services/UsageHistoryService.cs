@@ -70,6 +70,86 @@ public class UsageHistoryService
         return _histories;
     }
 
+    /// <summary>
+    /// Get daily cost summary for the last N days
+    /// </summary>
+    public Dictionary<DateTime, double> GetDailyCostSummary(int days = 30)
+    {
+        var summary = new Dictionary<DateTime, double>();
+        var cutoff = DateTime.UtcNow.Date.AddDays(-days);
+
+        foreach (var history in _histories.Values)
+        {
+            foreach (var entry in history.GetLastDays(days))
+            {
+                if (entry.CostUSD.HasValue && entry.CostUSD.Value > 0)
+                {
+                    var date = entry.Date.Date;
+                    if (date >= cutoff)
+                    {
+                        if (summary.ContainsKey(date))
+                        {
+                            summary[date] += entry.CostUSD.Value;
+                        }
+                        else
+                        {
+                            summary[date] = entry.CostUSD.Value;
+                        }
+                    }
+                }
+            }
+        }
+
+        return summary;
+    }
+
+    /// <summary>
+    /// Get total cost for all providers in the last N days
+    /// </summary>
+    public double GetTotalCost(int days = 30)
+    {
+        return GetDailyCostSummary(days).Values.Sum();
+    }
+
+    /// <summary>
+    /// Get cost breakdown by provider for the last N days
+    /// </summary>
+    public Dictionary<string, double> GetProviderCostBreakdown(int days = 30)
+    {
+        var breakdown = new Dictionary<string, double>();
+        var cutoff = DateTime.UtcNow.Date.AddDays(-days);
+
+        foreach (var (providerId, history) in _histories)
+        {
+            double total = 0;
+            foreach (var entry in history.GetLastDays(days))
+            {
+                if (entry.CostUSD.HasValue)
+                {
+                    total += entry.CostUSD.Value;
+                }
+            }
+            if (total > 0)
+            {
+                breakdown[providerId] = total;
+            }
+        }
+
+        return breakdown;
+    }
+
+    /// <summary>
+    /// Get daily cost data for chart visualization (dates sorted ascending)
+    /// </summary>
+    public List<(DateTime Date, double Cost)> GetDailyCostChartData(int days = 30)
+    {
+        var summary = GetDailyCostSummary(days);
+        return summary
+            .OrderBy(kvp => kvp.Key)
+            .Select(kvp => (kvp.Key, kvp.Value))
+            .ToList();
+    }
+
     private void LoadHistory()
     {
         try

@@ -51,6 +51,7 @@ public sealed class AugmentSessionFetchStrategy : IProviderFetchStrategy
 {
     public string StrategyName => "CLI Session";
     public int Priority => 1; // Lower priority - CLI token usually doesn't work for web API
+    public StrategyType Type => StrategyType.CLI;
 
     public Task<bool> CanExecuteAsync()
     {
@@ -87,6 +88,7 @@ public sealed class AugmentCookieFetchStrategy : IProviderFetchStrategy
 {
     public string StrategyName => "Cookie";
     public int Priority => 10; // Higher priority - this is what actually works
+    public StrategyType Type => StrategyType.Manual;
 
     public Task<bool> CanExecuteAsync()
     {
