@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml.Controls;
 using QuoteBar.ViewModels;
 using Microsoft.Extensions.DependencyInjection;
 using QuoteBar.Core.Models;
+using QuoteBar.Core.Services;
 
 namespace QuoteBar;
 
@@ -71,6 +72,7 @@ public sealed partial class MainWindow : Window
     
     public string FormatCost(double cost)
     {
-        return $"${cost:F2} USD";
+        // Use locale-aware currency formatting
+        return CurrencyFormatter.Format(cost, includeCode: true);
     }
 }

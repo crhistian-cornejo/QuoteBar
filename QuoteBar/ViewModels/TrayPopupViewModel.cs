@@ -76,24 +76,26 @@ public partial class TrayPopupViewModel : ObservableObject
         if (window == null)
             return "";
 
-        // If we have a ResetsAt timestamp, use it for precise countdown
+        // If we have a ResetsAt timestamp, use it for precise countdown or absolute time
         if (window.ResetsAt.HasValue)
         {
-            var remaining = window.ResetsAt.Value - DateTime.UtcNow;
+            var resetsAt = window.ResetsAt.Value;
+            var remaining = resetsAt - DateTime.UtcNow;
 
             if (remaining.TotalSeconds <= 0)
                 return "Resetting...";
 
-            if (remaining.TotalMinutes < 60)
-                return $"Resets in {(int)remaining.TotalMinutes}m";
+            // Check user preference for absolute vs relative time
+            var showAbsolute = SettingsService.Instance.Settings.ShowAbsoluteResetTime;
 
-            if (remaining.TotalHours < 24)
-                return $"Resets in {(int)remaining.TotalHours}h {remaining.Minutes}m";
-
-            if (remaining.TotalDays < 7)
-                return $"Resets in {(int)remaining.TotalDays}d {remaining.Hours}h";
-
-            return $"Resets in {(int)remaining.TotalDays}d";
+            if (showAbsolute)
+            {
+                return FormatAbsoluteResetTime(resetsAt);
+            }
+            else
+            {
+                return FormatRelativeResetTime(remaining);
+            }
         }
 
         // Fall back to ResetDescription if available
@@ -110,6 +112,58 @@ public partial class TrayPopupViewModel : ObservableObject
         }
 
         return "";
+    }
+
+    /// <summary>
+    /// Format reset time as relative ("in 2h 30m")
+    /// </summary>
+    private static string FormatRelativeResetTime(TimeSpan remaining)
+    {
+        if (remaining.TotalMinutes < 60)
+            return $"Resets in {(int)remaining.TotalMinutes}m";
+
+        if (remaining.TotalHours < 24)
+            return $"Resets in {(int)remaining.TotalHours}h {remaining.Minutes}m";
+
+        if (remaining.TotalDays < 7)
+            return $"Resets in {(int)remaining.TotalDays}d {remaining.Hours}h";
+
+        return $"Resets in {(int)remaining.TotalDays}d";
+    }
+
+    /// <summary>
+    /// Format reset time as absolute ("at 2:45 PM" or "Mon 2:45 PM")
+    /// </summary>
+    private static string FormatAbsoluteResetTime(DateTime resetsAtUtc)
+    {
+        var localTime = resetsAtUtc.ToLocalTime();
+        var now = DateTime.Now;
+
+        // Use system short time format (respects 12h/24h preference)
+        var timeFormat = System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.ShortTimePattern;
+
+        // If reset is today, just show time
+        if (localTime.Date == now.Date)
+        {
+            return $"Resets at {localTime.ToString(timeFormat)}";
+        }
+
+        // If reset is tomorrow, show "Tomorrow" + time
+        if (localTime.Date == now.Date.AddDays(1))
+        {
+            return $"Resets tomorrow {localTime.ToString(timeFormat)}";
+        }
+
+        // If reset is within this week, show day name + time
+        if (localTime.Date < now.Date.AddDays(7))
+        {
+            var dayName = localTime.ToString("ddd"); // Mon, Tue, etc.
+            return $"Resets {dayName} {localTime.ToString(timeFormat)}";
+        }
+
+        // For dates further out, show date + time
+        var dateFormat = System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.ShortDatePattern;
+        return $"Resets {localTime.ToString(dateFormat)} {localTime.ToString(timeFormat)}";
     }
 
     public string FormatUsage(RateWindow? window)

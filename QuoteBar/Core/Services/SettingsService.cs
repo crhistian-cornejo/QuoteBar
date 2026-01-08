@@ -163,6 +163,17 @@ public class AppSettings
     public List<string> HotkeyModifiers { get; set; } = new() { "Win", "Shift" };
     public string? HotkeyDisplayString { get; set; } = "Win + Shift + Q";
 
+    // Display Settings
+    /// <summary>
+    /// Currency display mode: "System", "USD", "EUR", "GBP", "JPY", "CNY"
+    /// </summary>
+    public string CurrencyDisplayMode { get; set; } = "System";
+
+    /// <summary>
+    /// Reset time display mode: false = relative ("in 2h 30m"), true = absolute ("at 14:45")
+    /// </summary>
+    public bool ShowAbsoluteResetTime { get; set; } = false;
+
     // Note: API tokens are stored securely in Windows Credential Manager via SecureCredentialStore
     // Do NOT add API tokens as properties here - they would be stored in plain text in settings.json
 

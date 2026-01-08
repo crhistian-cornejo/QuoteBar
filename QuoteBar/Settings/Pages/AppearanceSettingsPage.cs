@@ -25,6 +25,8 @@ public class AppearanceSettingsPage : ISettingsPage
     private ToggleSwitch? _iconsToggle;
     private ToggleSwitch? _trayBadgeToggle;
     private StackPanel? _trayBadgeProvidersPanel;
+    private ComboBox? _currencyCombo;
+    private ToggleSwitch? _absoluteTimeToggle;
 
     /// <summary>
     /// Event to notify parent when theme changes
@@ -96,6 +98,47 @@ public class AppearanceSettingsPage : ISettingsPage
             "Show provider icons",
             "Display icons next to provider names in tabs",
             _iconsToggle));
+
+        // Display Settings section
+        stack.Children.Add(new TextBlock
+        {
+            Text = "Display Format",
+            FontSize = 16,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Margin = new Thickness(0, 16, 0, 8)
+        });
+
+        // Currency format
+        _currencyCombo = new ComboBox { Width = 180 };
+        foreach (var mode in CurrencyFormatter.GetAllModes())
+        {
+            _currencyCombo.Items.Add(CurrencyFormatter.GetDisplayName(mode));
+        }
+        // Set selected index based on current setting
+        var currentMode = CurrencyFormatter.CurrentMode;
+        _currencyCombo.SelectedIndex = (int)currentMode;
+        _currencyCombo.SelectionChanged += (s, e) =>
+        {
+            var selectedMode = (CurrencyFormatter.CurrencyMode)_currencyCombo.SelectedIndex;
+            _settings.Settings.CurrencyDisplayMode = selectedMode.ToString();
+            _settings.Save();
+        };
+        stack.Children.Add(SettingCard.Create(
+            "Currency format",
+            "Choose how cost values are displayed",
+            _currencyCombo));
+
+        // Absolute vs relative reset time
+        _absoluteTimeToggle = SettingCard.CreateToggleSwitch(_settings.Settings.ShowAbsoluteResetTime);
+        _absoluteTimeToggle.Toggled += (s, e) =>
+        {
+            _settings.Settings.ShowAbsoluteResetTime = _absoluteTimeToggle.IsOn;
+            _settings.Save();
+        };
+        stack.Children.Add(SettingCard.Create(
+            "Show absolute reset times",
+            "Display \"Resets at 2:45 PM\" instead of \"Resets in 2h 30m\"",
+            _absoluteTimeToggle));
 
         // Tray Badge section
         stack.Children.Add(new TextBlock

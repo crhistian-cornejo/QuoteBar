@@ -1793,12 +1793,12 @@ public sealed class TrayPopupWindow : Window
         var sessionCost = cost.SessionCostUSD ?? 0;
         var sessionTokens = cost.SessionTokens ?? 0;
         AddCostRow(section, "Today:",
-            FormatCostUSD(sessionCost),
+            FormatCost(sessionCost),
             FormatTokenCount(sessionTokens));
 
         // Last 30 days
         AddCostRow(section, "Last 30 days:",
-            FormatCostUSD(cost.TotalCostUSD),
+            FormatCost(cost.TotalCostUSD),
             FormatTokenCount(cost.TotalTokens ?? 0));
 
         container.Child = section;
@@ -2033,7 +2033,7 @@ public sealed class TrayPopupWindow : Window
         });
         todayStack.Children.Add(new TextBlock
         {
-            Text = FormatCostUSD(snapshot.SessionCostUSD ?? 0),
+            Text = FormatCost(snapshot.SessionCostUSD ?? 0),
             FontSize = 16,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 76, 175, 80)) // Green
@@ -2058,7 +2058,7 @@ public sealed class TrayPopupWindow : Window
         });
         monthStack.Children.Add(new TextBlock
         {
-            Text = FormatCostUSD(snapshot.Last30DaysCostUSD ?? 0),
+            Text = FormatCost(snapshot.Last30DaysCostUSD ?? 0),
             FontSize = 16,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             Foreground = new SolidColorBrush(PrimaryTextColor),
@@ -2161,7 +2161,7 @@ public sealed class TrayPopupWindow : Window
 
             // Tooltip
             var tooltipText = cost > 0
-                ? $"{date:MMM d}\n{FormatCostUSD(cost)}\n{FormatTokenCount(tokens)}"
+                ? $"{date:MMM d}\n{FormatCost(cost)}\n{FormatTokenCount(tokens)}"
                 : $"{date:MMM d}\nNo usage";
             ToolTipService.SetToolTip(barContainer, tooltipText);
 
@@ -2174,7 +2174,7 @@ public sealed class TrayPopupWindow : Window
 
         var legend = new TextBlock
         {
-            Text = $"Peak: {FormatCostUSD(maxCost)}",
+            Text = $"Peak: {FormatCost(maxCost)}",
             FontSize = 9,
             Foreground = new SolidColorBrush(TertiaryTextColor),
             HorizontalAlignment = HorizontalAlignment.Center
@@ -2185,13 +2185,10 @@ public sealed class TrayPopupWindow : Window
         return grid;
     }
 
-    private static string FormatCostUSD(double amount)
+    private static string FormatCost(double amount)
     {
-        if (amount >= 1000)
-            return $"${amount:N0}";
-        if (amount >= 10)
-            return $"${amount:F1}";
-        return $"${amount:F2}";
+        // Use locale-aware currency formatting
+        return CurrencyFormatter.FormatSmart(amount);
     }
 
     private static string FormatTokenCount(int tokens)
