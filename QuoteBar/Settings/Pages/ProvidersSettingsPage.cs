@@ -22,6 +22,7 @@ using QuoteBar.Core.Providers.MiniMax;
 using QuoteBar.Core.Services;
 using QuoteBar.Settings.Controls;
 using QuoteBar.Settings.Helpers;
+using QuoteBar.Views;
 
 namespace QuoteBar.Settings.Pages;
 
@@ -619,7 +620,7 @@ public class ProvidersSettingsPage : ISettingsPage
         // Special handling for cookie/token-based providers
         if (providerId.ToLower() == "minimax")
         {
-            await ShowMiniMaxConnectDialogAsync(resolvedXamlRoot);
+            await LaunchMiniMaxLoginAsync();
             return;
         }
         if (providerId.ToLower() == "zai")
@@ -737,118 +738,71 @@ public class ProvidersSettingsPage : ISettingsPage
         }
     }
 
-    private async Task ShowMiniMaxConnectDialogAsync(XamlRoot? overrideXamlRoot = null)
+    private async Task LaunchMiniMaxLoginAsync()
     {
-        DebugLogger.Log("ProvidersSettingsPage", "ShowMiniMaxConnectDialogAsync called");
-
-        var xamlRoot = overrideXamlRoot ?? _content?.XamlRoot;
-        if (xamlRoot == null)
-        {
-            DebugLogger.Log("ProvidersSettingsPage", "ShowMiniMaxConnectDialogAsync: No XamlRoot available, aborting");
-            return;
-        }
-
         try
         {
-            DebugLogger.Log("ProvidersSettingsPage", "ShowMiniMaxConnectDialogAsync: Creating dialog content");
-
-            // Check if already configured
-            var existingCookie = MiniMaxSettingsReader.GetCookieHeader();
-            var hasExisting = !string.IsNullOrEmpty(existingCookie);
-            var maskedCookie = hasExisting && existingCookie!.Length > 20
-                ? $"{existingCookie.Substring(0, 10)}...({existingCookie.Length} chars)"
-                : (hasExisting ? "****" : null);
-
-            // Create dialog content with input field
-            var contentStack = new StackPanel { Spacing = 12, MinWidth = 400 };
-
-            var instructionText = hasExisting
-                ? $"Current cookie: {maskedCookie}\n\nTo update your MiniMax cookie:\n1. Go to platform.minimax.io and log in\n2. Open DevTools (F12) → Network tab\n3. Make any request and copy the 'Cookie' header\n4. Paste it below"
-                : "To connect MiniMax:\n\n1. Go to platform.minimax.io and log in\n2. Open DevTools (F12) → Network tab\n3. Make any request and copy the 'Cookie' header\n4. Paste it below";
-
-            contentStack.Children.Add(new TextBlock
+            var loginWindow = new MiniMaxLoginWindow();
+            var result = await loginWindow.ShowLoginAsync();
+            if (result.IsSuccess)
             {
-                Text = instructionText,
-                TextWrapping = TextWrapping.Wrap
-            });
-
-            var inputBox = new TextBox
-            {
-                PlaceholderText = hasExisting ? "Enter new cookie to replace current..." : "Paste your MiniMax cookie header here...",
-                AcceptsReturn = false,
-                TextWrapping = TextWrapping.NoWrap,
-                Height = 40,
-                MinWidth = 350
-            };
-            contentStack.Children.Add(inputBox);
-
-            // Paste from clipboard button
-            var pasteButton = new Button { Content = "Paste from Clipboard", Margin = new Thickness(0, 4, 0, 0) };
-            pasteButton.Click += async (s, e) =>
-            {
-                try
-                {
-                    var data = Clipboard.GetContent();
-                    if (data.Contains(StandardDataFormats.Text))
-                    {
-                        var text = await data.GetTextAsync();
-                        if (!string.IsNullOrWhiteSpace(text))
-                            inputBox.Text = text.Trim();
-                    }
-                }
-                catch { }
-            };
-            contentStack.Children.Add(pasteButton);
-
-            contentStack.Children.Add(new TextBlock
-            {
-                Text = "Cookie is stored securely in Windows Credential Manager.",
-                FontSize = 11,
-                Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
-                Opacity = 0.7
-            });
-
-            DebugLogger.Log("ProvidersSettingsPage", "ShowMiniMaxConnectDialogAsync: Creating ContentDialog");
-
-            var dialog = new ContentDialog
-            {
-                Title = "Connect MiniMax",
-                Content = contentStack,
-                PrimaryButtonText = "Save",
-                SecondaryButtonText = "Open MiniMax",
-                CloseButtonText = "Cancel",
-                XamlRoot = xamlRoot
-            };
-
-            dialog.SecondaryButtonClick += (s, e) =>
-            {
-                try { Process.Start(new ProcessStartInfo("https://platform.minimax.io/user-center/payment/coding-plan?cycle_type=3") { UseShellExecute = true }); }
-                catch { }
-                e.Cancel = true; // Don't close the dialog
-            };
-
-            DebugLogger.Log("ProvidersSettingsPage", "ShowMiniMaxConnectDialogAsync: About to call ShowAsync");
-            var result = await dialog.ShowAsync();
-            DebugLogger.Log("ProvidersSettingsPage", $"ShowMiniMaxConnectDialogAsync: ShowAsync returned {result}");
-
-            if (result == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(inputBox.Text))
-            {
-                var success = MiniMaxSettingsReader.StoreCookieHeader(inputBox.Text.Trim());
-                if (success)
-                {
-                    var usageStore = (Application.Current as QuoteBar.App)?.Services?.GetService(typeof(UsageStore)) as UsageStore;
-                    if (usageStore != null)
-                    {
-                        try { await usageStore.RefreshAsync("minimax"); }
-                        catch { }
-                    }
-                    RequestRefresh?.Invoke();
-                }
+                var usageStore = (Application.Current as QuoteBar.App)?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+                if (usageStore != null) await usageStore.RefreshAsync("minimax");
+                await Task.Delay(500);
+                RequestRefresh?.Invoke();
             }
         }
         catch (Exception ex)
         {
-            DebugLogger.LogError("ProvidersSettingsPage", "ShowMiniMaxConnectDialogAsync failed", ex);
+            DebugLogger.LogError("ProvidersSettingsPage", "LaunchMiniMaxLoginAsync failed", ex);
+        }
+    }
+
+    private async Task ShowMiniMaxConnectDialogAsync(XamlRoot? overrideXamlRoot = null)
+    {
+        var xamlRoot = overrideXamlRoot ?? _content?.XamlRoot;
+        if (xamlRoot == null) return;
+
+        // Check if already configured
+        var existingCookie = MiniMaxSettingsReader.GetCookieHeader();
+        var hasExisting = !string.IsNullOrEmpty(existingCookie);
+
+        // Simple input dialog using TextBox directly as Content
+        var inputBox = new TextBox
+        {
+            PlaceholderText = "Paste Cookie header here...",
+            AcceptsReturn = false,
+            Width = 400,
+            Header = hasExisting
+                ? $"Cookie configured ({existingCookie!.Length} chars). Paste new cookie to update:"
+                : "1. Go to platform.minimax.io\n2. Open DevTools (F12) → Network\n3. Copy 'Cookie' header\n4. Paste below:"
+        };
+
+        var dialog = new ContentDialog
+        {
+            Title = "Connect MiniMax",
+            Content = inputBox,
+            PrimaryButtonText = "Save",
+            SecondaryButtonText = "Open Website",
+            CloseButtonText = "Cancel",
+            XamlRoot = xamlRoot
+        };
+
+        dialog.SecondaryButtonClick += (s, e) =>
+        {
+            try { Process.Start(new ProcessStartInfo("https://platform.minimax.io/user-center/payment/coding-plan?cycle_type=3") { UseShellExecute = true }); }
+            catch { }
+            e.Cancel = true;
+        };
+
+        var result = await dialog.ShowAsync();
+
+        if (result == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(inputBox.Text))
+        {
+            MiniMaxSettingsReader.StoreCookieHeader(inputBox.Text.Trim());
+            var usageStore = (Application.Current as QuoteBar.App)?.Services?.GetService(typeof(UsageStore)) as UsageStore;
+            try { await usageStore?.RefreshAsync("minimax")!; } catch { }
+            RequestRefresh?.Invoke();
         }
     }
 

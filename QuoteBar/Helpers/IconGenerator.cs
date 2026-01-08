@@ -18,6 +18,42 @@ public static class IconGenerator
     private static readonly int[] IconSizes = { 16, 32, 48, 64, 128, 256 };
 
     /// <summary>
+    /// Detects if running in development mode (not installed in Program Files)
+    /// </summary>
+    public static bool IsDevMode
+    {
+        get
+        {
+            var exePath = AppContext.BaseDirectory;
+            // If running from bin/Debug or bin/Release, it's dev mode
+            return exePath.Contains("\\bin\\Debug\\") ||
+                   exePath.Contains("\\bin\\Release\\") ||
+                   exePath.Contains("/bin/Debug/") ||
+                   exePath.Contains("/bin/Release/");
+        }
+    }
+
+    /// <summary>
+    /// Gets the appropriate logo SVG path (dev or production)
+    /// </summary>
+    private static string GetLogoSvgPath()
+    {
+        var assetsPath = Path.Combine(AppContext.BaseDirectory, "Assets");
+
+        if (IsDevMode)
+        {
+            var devPath = Path.Combine(assetsPath, "LOGO-DEV.svg");
+            if (File.Exists(devPath))
+            {
+                DebugLogger.Log("IconGenerator", "Using DEV logo (green)");
+                return devPath;
+            }
+        }
+
+        return Path.Combine(assetsPath, "LOGO.svg");
+    }
+
+    /// <summary>
     /// Generate all icon sizes from LOGO.svg if they don't exist
     /// </summary>
     public static void EnsureIconsExist()
@@ -149,8 +185,7 @@ public static class IconGenerator
     /// </summary>
     public static IntPtr GetTrayIconHandle()
     {
-        var assetsPath = Path.Combine(AppContext.BaseDirectory, "Assets");
-        var svgPath = Path.Combine(assetsPath, "LOGO.svg");
+        var svgPath = GetLogoSvgPath();
 
         if (File.Exists(svgPath))
         {
@@ -166,6 +201,7 @@ public static class IconGenerator
         }
 
         // Fallback to PNG if SVG fails
+        var assetsPath = Path.Combine(AppContext.BaseDirectory, "Assets");
         var pngPath = Path.Combine(assetsPath, "LOGO-16.png");
         if (File.Exists(pngPath))
         {
@@ -189,8 +225,7 @@ public static class IconGenerator
     /// </summary>
     public static Bitmap? GetLogoBitmap(int size)
     {
-        var assetsPath = Path.Combine(AppContext.BaseDirectory, "Assets");
-        var svgPath = Path.Combine(assetsPath, "LOGO.svg");
+        var svgPath = GetLogoSvgPath();
 
         if (File.Exists(svgPath))
         {
@@ -203,6 +238,8 @@ public static class IconGenerator
                 DebugLogger.LogError("IconGenerator", $"GetLogoBitmap({size}) from SVG failed", ex);
             }
         }
+
+        var assetsPath = Path.Combine(AppContext.BaseDirectory, "Assets");
 
         // Fallback to pre-generated PNG
         var pngPath = Path.Combine(assetsPath, $"LOGO-{size}.png");

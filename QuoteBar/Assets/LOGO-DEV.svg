@@ -1,0 +1,50 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <filter id="neonGlow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="12" result="blur" />
+            <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+            </feMerge>
+        </filter>
+
+        <filter id="starGlow" x="-100%" y="-100%" width="300%" height="300%">
+             <feGaussianBlur in="SourceGraphic" stdDeviation="20" result="blur" />
+             <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+            </feMerge>
+        </filter>
+
+        <!-- DEV: Green gradient background -->
+        <radialGradient id="bgGradient" cx="50%" cy="50%" r="50%" fx="50%" fy="50%">
+            <stop offset="0%" stop-color="#1a4d1a" />
+            <stop offset="100%" stop-color="#0d260d" />
+        </radialGradient>
+
+        <!-- DEV: Green ring gradient -->
+        <linearGradient id="ringGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="10%" stop-color="#00ff88" />
+            <stop offset="50%" stop-color="#44ff00" />
+            <stop offset="90%" stop-color="#88ff44" />
+        </linearGradient>
+
+        <radialGradient id="starGradient" cx="50%" cy="50%" r="50%" fx="50%" fy="50%">
+            <stop offset="0%" stop-color="#ffffff" />
+            <stop offset="40%" stop-color="#aaffaa" />
+            <stop offset="100%" stop-color="#aaffaa" stop-opacity="0" />
+        </radialGradient>
+    </defs>
+
+    <circle cx="256" cy="256" r="256" fill="url(#bgGradient)"/>
+
+    <g filter="url(#neonGlow)">
+        <circle cx="256" cy="256" r="215" stroke="url(#ringGradient)" stroke-width="30" opacity="0.4" />
+
+        <circle cx="256" cy="256" r="215" stroke="url(#ringGradient)" stroke-width="12" />
+    </g>
+
+    <g transform="translate(256, 256)" filter="url(#starGlow)">
+        <path d="M 0 -130 Q 30 -30 130 0 Q 30 30 0 130 Q -30 30 -130 0 Q -30 -30 0 -130 Z" fill="url(#starGradient)"/>
+    </g>
+</svg>

@@ -50,13 +50,17 @@ public class MiniMaxCookieStrategy : IProviderFetchStrategy
     {
         try
         {
+            Log("FetchAsync called");
             var rawCookie = MiniMaxSettingsReader.GetCookieHeader();
+            Log($"Raw cookie from storage: {(rawCookie != null ? $"{rawCookie.Length} chars" : "NULL")}");
+
             if (string.IsNullOrEmpty(rawCookie))
             {
+                Log("No cookie configured");
                 return new UsageSnapshot
                 {
                     ProviderId = "minimax",
-                    ErrorMessage = "MiniMax cookie not configured. Paste your cookie header in Settings -> Providers -> MiniMax.",
+                    ErrorMessage = "MiniMax cookie not configured. Click Connect to sign in.",
                     FetchedAt = DateTime.UtcNow
                 };
             }
@@ -65,6 +69,7 @@ public class MiniMaxCookieStrategy : IProviderFetchStrategy
             var cookieOverride = MiniMaxCookieHeader.Override(rawCookie);
             if (cookieOverride == null)
             {
+                Log("Cookie parse failed");
                 return new UsageSnapshot
                 {
                     ProviderId = "minimax",
@@ -73,17 +78,20 @@ public class MiniMaxCookieStrategy : IProviderFetchStrategy
                 };
             }
 
+            Log($"Parsed cookie: {cookieOverride.CookieHeader.Length} chars, auth={cookieOverride.AuthorizationToken != null}, groupId={cookieOverride.GroupId}");
+
             var usage = await MiniMaxUsageFetcher.FetchUsageAsync(
                 cookieOverride.CookieHeader,
                 cookieOverride.AuthorizationToken,
                 cookieOverride.GroupId,
                 cancellationToken);
 
+            Log($"Fetch result: {(usage.ErrorMessage != null ? $"Error: {usage.ErrorMessage}" : $"Success - {usage.Primary?.UsedPercent}% used")}");
             return usage;
         }
         catch (MiniMaxUsageException ex)
         {
-            Log($"Fetch ERROR: {ex.Message}");
+            Log($"Fetch MiniMaxUsageException: {ex.Message}");
             return new UsageSnapshot
             {
                 ProviderId = "minimax",
@@ -93,7 +101,7 @@ public class MiniMaxCookieStrategy : IProviderFetchStrategy
         }
         catch (Exception ex)
         {
-            Log($"Fetch ERROR: {ex.Message}\n{ex.StackTrace}");
+            Log($"Fetch Exception: {ex.Message}\n{ex.StackTrace}");
             return new UsageSnapshot
             {
                 ProviderId = "minimax",
