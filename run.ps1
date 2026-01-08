@@ -9,8 +9,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $config = if ($Release) { "Release" } else { "Debug" }
-$projectPath = "$PSScriptRoot\NativeBar.WinUI"
-$appPath = "$projectPath\bin\$config\net9.0-windows10.0.22621.0\win-x64\NativeBar.WinUI.exe"
+$projectPath = "$PSScriptRoot\QuoteBar"
+$appPath = "$projectPath\bin\$config\net9.0-windows10.0.22621.0\win-x64\QuoteBar.exe"
 $logPath = "$env:LOCALAPPDATA\QuoteBar\logs"
 
 # Colors
@@ -22,7 +22,7 @@ function Write-Line { Write-Host ("=" * 60) -ForegroundColor DarkGray }
 
 # Kill existing instance
 function Stop-QuoteBar {
-    $existing = Get-Process -Name "NativeBar.WinUI" -ErrorAction SilentlyContinue
+    $existing = Get-Process -Name "QuoteBar" -ErrorAction SilentlyContinue
     if ($existing) {
         Write-Warn "Stopping existing QuoteBar instance (PID: $($existing.Id))..."
         $existing | Stop-Process -Force

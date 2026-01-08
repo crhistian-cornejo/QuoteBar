@@ -1,0 +1,70 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # Triggers on version tags like v1.0.0, v1.2.3, etc.
+
+env:
+  DOTNET_VERSION: '9.0.x'
+  PROJECT_PATH: 'QuoteBar/QuoteBar.csproj'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Get version from tag
+      id: version
+      shell: bash
+      run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+    - name: Restore dependencies
+      run: dotnet restore ${{ env.PROJECT_PATH }}
+
+    - name: Build Release (x64)
+      run: |
+        dotnet publish ${{ env.PROJECT_PATH }} `
+          -c Release `
+          -r win-x64 `
+          --self-contained true `
+          -p:PublishSingleFile=false `
+          -p:Version=${{ steps.version.outputs.VERSION }} `
+          -o ./publish/win-x64
+
+    - name: Create portable ZIP (x64)
+      shell: pwsh
+      run: |
+        Compress-Archive -Path ./publish/win-x64/* -DestinationPath ./QuoteBar-win-x64-v${{ steps.version.outputs.VERSION }}.zip
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        name: QuoteBar v${{ steps.version.outputs.VERSION }}
+        body: |
+          ## QuoteBar v${{ steps.version.outputs.VERSION }}
+
+          ### Installation
+          1. Download `QuoteBar-win-x64-v${{ steps.version.outputs.VERSION }}.zip`
+          2. Extract to any folder
+          3. Run `QuoteBar.exe`
+
+          ### What's New
+          See commit history for changes.
+
+          ---
+          Built automatically from tag `v${{ steps.version.outputs.VERSION }}`
+        files: |
+          QuoteBar-win-x64-v${{ steps.version.outputs.VERSION }}.zip
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

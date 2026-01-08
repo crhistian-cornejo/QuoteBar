@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    Development script for NativeBar WinUI application
+    Development script for QuoteBar WinUI application
 
 .DESCRIPTION
-    Builds and runs the NativeBar application in development/debug mode.
+    Builds and runs the QuoteBar application in development/debug mode.
     Supports hot-reload style development with automatic rebuild.
 
 .PARAMETER Action
@@ -23,10 +23,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ProjectPath = Join-Path $PSScriptRoot "NativeBar.WinUI"
-$SolutionPath = Join-Path $PSScriptRoot "NativeBar.sln"
-$ExePath = Join-Path $ProjectPath "bin\x64\Release\net9.0-windows10.0.19041.0\win-x64\NativeBar.WinUI.exe"
-$DebugExePath = Join-Path $ProjectPath "bin\x64\Debug\net9.0-windows10.0.19041.0\win-x64\NativeBar.WinUI.exe"
+$ProjectPath = Join-Path $PSScriptRoot "QuoteBar"
+$SolutionPath = Join-Path $PSScriptRoot "QuoteBar.sln"
+$ExePath = Join-Path $ProjectPath "bin\Release\net9.0-windows10.0.22621.0\win-x64\QuoteBar.exe"
+$DebugExePath = Join-Path $ProjectPath "bin\Debug\net9.0-windows10.0.22621.0\win-x64\QuoteBar.exe"
 
 function Write-Status($message) {
     Write-Host "[$([DateTime]::Now.ToString('HH:mm:ss'))] $message" -ForegroundColor Cyan
@@ -40,11 +40,11 @@ function Write-Error($message) {
     Write-Host "[$([DateTime]::Now.ToString('HH:mm:ss'))] ERROR: $message" -ForegroundColor Red
 }
 
-function Stop-NativeBar {
-    $process = Get-Process -Name "NativeBar.WinUI" -ErrorAction SilentlyContinue
+function Stop-QuoteBar {
+    $process = Get-Process -Name "QuoteBar" -ErrorAction SilentlyContinue
     if ($process) {
-        Write-Status "Stopping running NativeBar instance..."
-        Stop-Process -Name "NativeBar.WinUI" -Force -ErrorAction SilentlyContinue
+        Write-Status "Stopping running QuoteBar instance..."
+        Stop-Process -Name "QuoteBar" -Force -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 1
     }
 }
@@ -52,7 +52,7 @@ function Stop-NativeBar {
 function Build-Project {
     param([string]$Configuration = "Release")
 
-    Write-Status "Building NativeBar ($Configuration)..."
+    Write-Status "Building QuoteBar ($Configuration)..."
 
     Push-Location $PSScriptRoot
     try {
@@ -83,9 +83,9 @@ function Run-App {
         }
     }
 
-    Write-Status "Starting NativeBar..."
+    Write-Status "Starting QuoteBar..."
     Start-Process $exe
-    Write-Success "NativeBar started!"
+    Write-Success "QuoteBar started!"
 }
 
 function Clean-Project {
@@ -107,7 +107,7 @@ function Clean-Project {
 }
 
 function Publish-App {
-    Write-Status "Publishing NativeBar for distribution..."
+    Write-Status "Publishing QuoteBar for distribution..."
 
     Push-Location $PSScriptRoot
     try {
@@ -139,14 +139,14 @@ switch ($Action) {
         Build-Project -Configuration "Release"
     }
     "run" {
-        Stop-NativeBar
+        Stop-QuoteBar
         if (Build-Project -Configuration "Release") {
             Run-App -Configuration "Release"
         }
     }
     "watch" {
         Write-Status "Starting watch mode (Ctrl+C to stop)..."
-        Stop-NativeBar
+        Stop-QuoteBar
 
         Push-Location $PSScriptRoot
         try {
@@ -158,15 +158,15 @@ switch ($Action) {
         }
     }
     "clean" {
-        Stop-NativeBar
+        Stop-QuoteBar
         Clean-Project
     }
     "release" {
-        Stop-NativeBar
+        Stop-QuoteBar
         Build-Project -Configuration "Release"
     }
     "publish" {
-        Stop-NativeBar
+        Stop-QuoteBar
         Publish-App
     }
 }

@@ -126,7 +126,7 @@ See `Core/Providers/ProviderSettings.cs` for the dynamic settings framework.
 
 ### Releasing
 
-1. Bump version in `NativeBar.WinUI.csproj`
+1. Bump version in `QuoteBar/QuoteBar.csproj`
 2. Build: `.\dev.ps1 release`
 3. Create GitHub release with tag
 4. Upload `QuoteBar-*.zip` from `bin/Release/`
@@ -165,7 +165,7 @@ API tokens are stored in Windows Credential Manager (encrypted).
 - Browser cookies reused when enabled (no password storage)
 - No data sent to external servers except provider APIs
 - Local storage only (settings + usage history)
-- Open source: [GitHub](https://github.com/your-org/QuoteBar)
+- Open source: [GitHub](https://github.com/crhistian-cornejo/QuoteBar)
 
 ## Documentation
 
