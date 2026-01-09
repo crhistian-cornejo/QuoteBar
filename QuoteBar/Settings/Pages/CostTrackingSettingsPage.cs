@@ -24,10 +24,9 @@ public class CostTrackingSettingsPage : ISettingsPage
     private StackPanel? _mainStack;
     private bool _isLoading;
 
-    // Data holders
+    // Data holders (Copilot removed - GitHub billing API not available for individual Pro plans)
     private CostUsageTokenSnapshot? _codexSnapshot;
     private CostUsageTokenSnapshot? _claudeSnapshot;
-    private CostUsageTokenSnapshot? _copilotSnapshot;
 
     public FrameworkElement Content => _content ??= CreateContent();
 
@@ -112,15 +111,14 @@ public class CostTrackingSettingsPage : ISettingsPage
         try
         {
             // Load cost data for supported providers
+            // Note: Copilot removed - GitHub billing API not available for individual Pro plans
             var codexTask = _costFetcher.LoadTokenSnapshotAsync(CostUsageProvider.Codex);
             var claudeTask = _costFetcher.LoadTokenSnapshotAsync(CostUsageProvider.Claude);
-            var copilotTask = _costFetcher.LoadTokenSnapshotAsync(CostUsageProvider.Copilot);
 
-            await Task.WhenAll(codexTask, claudeTask, copilotTask);
+            await Task.WhenAll(codexTask, claudeTask);
 
             _codexSnapshot = codexTask.Result;
             _claudeSnapshot = claudeTask.Result;
-            _copilotSnapshot = copilotTask.Result;
 
             // Update UI on dispatcher thread
             _mainStack.DispatcherQueue.TryEnqueue(() =>
@@ -150,16 +148,14 @@ public class CostTrackingSettingsPage : ISettingsPage
         while (_mainStack.Children.Count > 2)
             _mainStack.Children.RemoveAt(2);
 
-        // Calculate totals
+        // Calculate totals (Copilot excluded - no API for individual plans)
         var codexTotal = _codexSnapshot?.Last30DaysCostUSD ?? 0;
         var claudeTotal = _claudeSnapshot?.Last30DaysCostUSD ?? 0;
-        var copilotTotal = _copilotSnapshot?.Last30DaysCostUSD ?? 0;
-        var grandTotal = codexTotal + claudeTotal + copilotTotal;
+        var grandTotal = codexTotal + claudeTotal;
 
         var codexTokens = _codexSnapshot?.Last30DaysTokens ?? 0;
         var claudeTokens = _claudeSnapshot?.Last30DaysTokens ?? 0;
-        var copilotRequests = _copilotSnapshot?.Last30DaysTokens ?? 0;
-        var grandTotalTokens = codexTokens + claudeTokens + copilotRequests;
+        var grandTotalTokens = codexTokens + claudeTokens;
 
         // Total cost summary card
         _mainStack.Children.Add(CreateTotalCostCard(grandTotal, grandTotalTokens));
@@ -175,10 +171,7 @@ public class CostTrackingSettingsPage : ISettingsPage
             _mainStack.Children.Add(CreateProviderSection("claude", "Claude", "#D97757", _claudeSnapshot));
         }
 
-        if (_copilotSnapshot != null && (_copilotSnapshot.Daily.Count > 0 || _copilotSnapshot.Last30DaysCostUSD > 0))
-        {
-            _mainStack.Children.Add(CreateProviderSection("copilot", "Copilot", "#24292F", _copilotSnapshot, isPremiumRequests: true));
-        }
+        // Note: Copilot removed - GitHub billing API not available for individual Pro plans
 
         // No data message if all are empty
         if (grandTotal == 0 && grandTotalTokens == 0)
@@ -204,18 +197,45 @@ public class CostTrackingSettingsPage : ISettingsPage
             BorderThickness = new Thickness(1)
         };
 
+        var mainStack = new StackPanel { Spacing = 16 };
+
+        // Top row: Cost and Tokens side by side
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        // Left: Total cost
+        // Left: Total cost with "Estimated" badge
         var costStack = new StackPanel { Spacing = 4 };
-        costStack.Children.Add(new TextBlock
+        
+        // Header row with label + badge
+        var costHeaderRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        costHeaderRow.Children.Add(new TextBlock
         {
-            Text = "Total Cost (30 days)",
+            Text = "Estimated Cost (30 days)",
             FontSize = 13,
-            Foreground = new SolidColorBrush(_theme.SecondaryTextColor)
+            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
+            VerticalAlignment = VerticalAlignment.Center
         });
+        
+        // "Estimated" badge
+        var estimatedBadge = new Border
+        {
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(30, 255, 180, 0)),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(6, 2, 6, 2),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock
+            {
+                Text = "~",
+                FontSize = 10,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 200, 140, 0))
+            }
+        };
+        ToolTipService.SetToolTip(estimatedBadge, "Costs are estimated from local CLI logs using current API pricing. Actual bill may differ.");
+        costHeaderRow.Children.Add(estimatedBadge);
+        
+        costStack.Children.Add(costHeaderRow);
         costStack.Children.Add(new TextBlock
         {
             Text = FormatUSD(totalCost),
@@ -246,8 +266,18 @@ public class CostTrackingSettingsPage : ISettingsPage
 
         grid.Children.Add(costStack);
         grid.Children.Add(tokensStack);
-        card.Child = grid;
+        mainStack.Children.Add(grid);
 
+        // Bottom: Explanation text
+        mainStack.Children.Add(new TextBlock
+        {
+            Text = "Based on local CLI logs · May differ from actual billing",
+            FontSize = 11,
+            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
+            FontStyle = Windows.UI.Text.FontStyle.Italic
+        });
+
+        card.Child = mainStack;
         return card;
     }
 
@@ -265,13 +295,10 @@ public class CostTrackingSettingsPage : ISettingsPage
         };
 
         var stack = new StackPanel { Spacing = 12 };
+        var unitLabel = isPremiumRequests ? "requests" : "tokens";
 
-        // Header with provider name and totals
-        var header = new Grid();
-        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        var nameStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+        // Header with provider name only (clean, no duplicate costs)
+        var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
         
         // Icon (branded border + SVG)
         var iconElement = ProviderIconHelper.CreateProviderImage(providerId, size: 18, forIconWithBackground: true);
@@ -285,8 +312,8 @@ public class CostTrackingSettingsPage : ISettingsPage
             Child = iconElement ?? (FrameworkElement)ProviderIconHelper.CreateProviderInitial(providerName, 12)
         };
         
-        nameStack.Children.Add(iconBorder);
-        nameStack.Children.Add(new TextBlock
+        header.Children.Add(iconBorder);
+        header.Children.Add(new TextBlock
         {
             Text = providerName,
             FontSize = 15,
@@ -294,54 +321,65 @@ public class CostTrackingSettingsPage : ISettingsPage
             Foreground = new SolidColorBrush(_theme.TextColor),
             VerticalAlignment = VerticalAlignment.Center
         });
-        Grid.SetColumn(nameStack, 0);
-
-        var unitLabel = isPremiumRequests ? "requests" : "tokens";
-        var totalsStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
-        totalsStack.Children.Add(new TextBlock
-        {
-            Text = FormatUSD(snapshot.Last30DaysCostUSD ?? 0),
-            FontSize = 15,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Foreground = new SolidColorBrush(color)
-        });
-        totalsStack.Children.Add(new TextBlock
-        {
-            Text = $"{FormatTokenCount(snapshot.Last30DaysTokens ?? 0)} {unitLabel}",
-            FontSize = 13,
-            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
-            VerticalAlignment = VerticalAlignment.Center
-        });
-        Grid.SetColumn(totalsStack, 1);
-
-        header.Children.Add(nameStack);
-        header.Children.Add(totalsStack);
         stack.Children.Add(header);
 
-        // Today's usage
+        // Summary row: 30-day cost + tokens (clean single line)
+        var summaryRow = new Grid();
+        summaryRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        summaryRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        
+        var costText = new TextBlock
+        {
+            Text = $"30 days: {FormatUSD(snapshot.Last30DaysCostUSD ?? 0)}",
+            FontSize = 13,
+            Foreground = new SolidColorBrush(color)
+        };
+        Grid.SetColumn(costText, 0);
+        
+        var tokensText = new TextBlock
+        {
+            Text = $"{FormatTokenCount(snapshot.Last30DaysTokens ?? 0)} {unitLabel}",
+            FontSize = 12,
+            Foreground = new SolidColorBrush(_theme.SecondaryTextColor)
+        };
+        Grid.SetColumn(tokensText, 1);
+        
+        summaryRow.Children.Add(costText);
+        summaryRow.Children.Add(tokensText);
+        stack.Children.Add(summaryRow);
+
+        // Today's usage (if any)
         if (snapshot.SessionCostUSD > 0 || snapshot.SessionTokens > 0)
         {
-            var todayRow = new Grid { Margin = new Thickness(0, 4, 0, 0) };
-            todayRow.Children.Add(new TextBlock
+            var todayRow = new Grid();
+            todayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            todayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            
+            var todayLabel = new TextBlock
             {
-                Text = "Today:",
+                Text = $"Today: {FormatUSD(snapshot.SessionCostUSD ?? 0)}",
                 FontSize = 12,
+                Foreground = new SolidColorBrush(_theme.TextColor)
+            };
+            Grid.SetColumn(todayLabel, 0);
+            
+            var todayTokens = new TextBlock
+            {
+                Text = $"{FormatTokenCount(snapshot.SessionTokens ?? 0)} {unitLabel}",
+                FontSize = 11,
                 Foreground = new SolidColorBrush(_theme.SecondaryTextColor)
-            });
-            todayRow.Children.Add(new TextBlock
-            {
-                Text = $"{FormatUSD(snapshot.SessionCostUSD ?? 0)} · {FormatTokenCount(snapshot.SessionTokens ?? 0)} {unitLabel}",
-                FontSize = 12,
-                Foreground = new SolidColorBrush(_theme.TextColor),
-                HorizontalAlignment = HorizontalAlignment.Right
-            });
+            };
+            Grid.SetColumn(todayTokens, 1);
+            
+            todayRow.Children.Add(todayLabel);
+            todayRow.Children.Add(todayTokens);
             stack.Children.Add(todayRow);
         }
 
         // Daily chart
         if (snapshot.Daily.Count > 0)
         {
-            stack.Children.Add(CreateDailyChart(snapshot.Daily.ToList(), color));
+            stack.Children.Add(CreateDailyChart(snapshot.Daily.ToList(), color, providerId));
         }
 
         // Model breakdown
@@ -400,7 +438,7 @@ public class CostTrackingSettingsPage : ISettingsPage
         return card;
     }
 
-    private Grid CreateDailyChart(List<CostUsageDailyEntry> daily, Windows.UI.Color barColor)
+    private Grid CreateDailyChart(List<CostUsageDailyEntry> daily, Windows.UI.Color barColor, string providerId)
     {
         var grid = new Grid
         {
@@ -469,23 +507,33 @@ public class CostTrackingSettingsPage : ISettingsPage
 
             // Tooltip with full details
             var tooltipText = cost > 0 
-                ? $"{date:MMM d, yyyy}\n{FormatUSD(cost)}\n{FormatTokenCount(tokens)}"
+                ? $"{date:MMM d, yyyy}\n~{FormatUSD(cost)} (estimated)\n{FormatTokenCount(tokens)} tokens"
                 : $"{date:MMM d, yyyy}\nNo usage";
             ToolTipService.SetToolTip(barContainer, tooltipText);
 
             barsPanel.Children.Add(barContainer);
         }
 
-        // Add legend
+        // Add legend with source indicator
         var chartStack = new StackPanel { Spacing = 8 };
         chartStack.Children.Add(barsPanel);
         
+        // Different source label per provider
+        var sourceLabel = providerId switch
+        {
+            "copilot" => "From GitHub billing API",
+            "codex" => "From local ~/.codex/sessions logs",
+            "claude" => "From local ~/.claude/projects logs",
+            _ => "From local CLI logs"
+        };
+        
         var legend = new TextBlock
         {
-            Text = $"Last 14 days · Peak: {FormatUSD(maxCost)}",
+            Text = $"Last 14 days · {sourceLabel}",
             FontSize = 10,
             Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
-            HorizontalAlignment = HorizontalAlignment.Center
+            HorizontalAlignment = HorizontalAlignment.Center,
+            FontStyle = Windows.UI.Text.FontStyle.Italic
         };
         chartStack.Children.Add(legend);
 
@@ -552,15 +600,14 @@ public class CostTrackingSettingsPage : ISettingsPage
             button.Content = "Refreshing...";
             try
             {
+                // Note: Copilot removed - GitHub billing API not available for individual Pro plans
                 var codexTask = _costFetcher.RefreshCostSnapshotAsync(CostUsageProvider.Codex);
                 var claudeTask = _costFetcher.RefreshCostSnapshotAsync(CostUsageProvider.Claude);
-                var copilotTask = _costFetcher.RefreshCostSnapshotAsync(CostUsageProvider.Copilot);
 
-                await Task.WhenAll(codexTask, claudeTask, copilotTask);
+                await Task.WhenAll(codexTask, claudeTask);
 
                 _codexSnapshot = codexTask.Result;
                 _claudeSnapshot = claudeTask.Result;
-                _copilotSnapshot = copilotTask.Result;
 
                 BuildCostUI();
             }
@@ -580,6 +627,59 @@ public class CostTrackingSettingsPage : ISettingsPage
 
     private Border CreateInfoCard()
     {
+        var infoStack = new StackPanel { Spacing = 8 };
+        
+        // Header
+        infoStack.Children.Add(new TextBlock
+        {
+            Text = "About Cost Tracking",
+            FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(_theme.TextColor)
+        });
+        
+        // Data sources list (Copilot excluded - GitHub billing API not available for individual Pro plans)
+        var sourcesList = new StackPanel { Spacing = 4 };
+        
+        var sources = new[]
+        {
+            ("Codex", "~/.codex/sessions (local logs)"),
+            ("Claude", "~/.claude/projects (local logs)")
+        };
+        
+        foreach (var (provider, source) in sources)
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            row.Children.Add(new TextBlock
+            {
+                Text = $"{provider}:",
+                FontSize = 11,
+                Foreground = new SolidColorBrush(_theme.TextColor),
+                FontWeight = Microsoft.UI.Text.FontWeights.Medium,
+                Width = 55
+            });
+            row.Children.Add(new TextBlock
+            {
+                Text = source,
+                FontSize = 11,
+                Foreground = new SolidColorBrush(_theme.SecondaryTextColor)
+            });
+            sourcesList.Children.Add(row);
+        }
+        
+        infoStack.Children.Add(sourcesList);
+        
+        // Disclaimer
+        infoStack.Children.Add(new TextBlock
+        {
+            Text = "Costs are estimated using current API pricing and may differ from actual billing.",
+            FontSize = 11,
+            Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
+            FontStyle = Windows.UI.Text.FontStyle.Italic,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 4, 0, 0)
+        });
+        
         return new Border
         {
             Background = new SolidColorBrush(_theme.CardColor),
@@ -588,13 +688,7 @@ public class CostTrackingSettingsPage : ISettingsPage
             Margin = new Thickness(0, 8, 0, 0),
             BorderBrush = new SolidColorBrush(_theme.BorderColor),
             BorderThickness = new Thickness(1),
-            Child = new TextBlock
-            {
-                Text = "Cost tracking scans local CLI logs from Codex (~/.codex/sessions) and Claude Code (~/.claude/projects), and uses GitHub's billing API for Copilot premium requests. Costs are calculated using current API pricing and may differ from your actual bill. Note: Claude Code automatically uses Haiku for some background tasks like indexing.",
-                FontSize = 12,
-                Foreground = new SolidColorBrush(_theme.SecondaryTextColor),
-                TextWrapping = TextWrapping.Wrap
-            }
+            Child = infoStack
         };
     }
 
@@ -626,11 +720,8 @@ public class CostTrackingSettingsPage : ISettingsPage
 
     private static string FormatUSD(double amount)
     {
-        if (amount >= 1000)
-            return $"${amount:N0}";
-        if (amount >= 10)
-            return $"${amount:F1}";
-        return $"${amount:F2}";
+        // Use locale-aware currency formatting based on user settings
+        return CurrencyFormatter.FormatSmart(amount);
     }
 
     private static string FormatTokenCount(int tokens)

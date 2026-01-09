@@ -5,6 +5,31 @@ All notable changes to QuoteBar will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-01-09
+
+### Added
+- **Onboarding flow**: First-run setup wizard with provider configuration
+- **Request History popup**: View recent API requests with timing and model info
+- **Tier Badge component**: Visual indicator for subscription plans (Pro, Team, Enterprise, etc.)
+- **Keyboard navigation**: Arrow keys (←/→) to navigate between provider tabs, Shift+Tab for previous
+- **Force re-onboarding**: Version-based system to show onboarding on major updates
+- **Session expired handling**: Automatic detection and re-auth prompts for Augment, Claude, MiniMax
+- **Privacy helper**: Mask sensitive data in logs (API keys, tokens, emails)
+
+### Changed
+- **Cost Tracking**: Removed Copilot (GitHub billing API not available for individual Pro plans)
+- **Cost Tracking UI**: Added "Estimated" indicators, removed duplicate pricing, clearer data sources
+- **ZAI auth badge**: Shows "API Token" when plan name is not available
+- **Popover UX**: Extracted magic numbers to constants, improved memory management with event cleanup
+- **CI workflow**: Fixed dotnet-format (now built-in), fixed CodeQL analysis with proper init step
+- **Labeler workflow**: Corrected configuration format for actions/labeler v5
+- **Dependencies workflow**: Removed non-functional PR creation step (now only reports)
+
+### Fixed
+- **Memory leak**: Event handlers now properly unsubscribed on popup close
+- **Pointer exit grace period**: Prevents popup from closing during tab switch animations
+- **SharedHttpClient**: Better error handling and disposal
+
 ## [0.2.1] - 2026-01-08
 
 ### Added
@@ -61,6 +86,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hotkey support for quick popup access
 - Auto-start with Windows option
 
+[0.2.2]: https://github.com/crhistian-cornejo/QuoteBar/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/crhistian-cornejo/QuoteBar/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/crhistian-cornejo/QuoteBar/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/crhistian-cornejo/QuoteBar/releases/tag/v0.1.0

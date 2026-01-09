@@ -23,6 +23,7 @@ public class AppearanceSettingsPage : ISettingsPage
     private ToggleSwitch? _accentToggle;
     private ToggleSwitch? _compactToggle;
     private ToggleSwitch? _iconsToggle;
+    private ToggleSwitch? _privacyModeToggle;
     private ToggleSwitch? _trayBadgeToggle;
     private StackPanel? _trayBadgeProvidersPanel;
     private ComboBox? _currencyCombo;
@@ -98,6 +99,18 @@ public class AppearanceSettingsPage : ISettingsPage
             "Show provider icons",
             "Display icons next to provider names in tabs",
             _iconsToggle));
+
+        // Privacy Mode toggle
+        _privacyModeToggle = SettingCard.CreateToggleSwitch(_settings.Settings.PrivacyModeEnabled);
+        _privacyModeToggle.Toggled += (s, e) =>
+        {
+            _settings.Settings.PrivacyModeEnabled = _privacyModeToggle.IsOn;
+            _settings.Save();
+        };
+        stack.Children.Add(SettingCard.Create(
+            "Privacy mode",
+            "Mask email addresses in the UI (e.g., u***@***.com)",
+            _privacyModeToggle));
 
         // Display Settings section
         stack.Children.Add(new TextBlock

@@ -180,6 +180,16 @@ Inspired by [CodexBar](https://github.com/steipete/CodexBar) for macOS.
 
 ---
 
+## 📊 Repo Activity
+
+[![Repo Activity](https://github-readme-activity-graph.vercel.app/graph?username=crhistian-cornejo&theme=react-dark)](https://github.com/crhistian-cornejo/QuoteBar)
+
+## 📈 GitHub Stats
+
+<img src="https://github-readme-stats.vercel.app/api?username=crhistian-cornejo&show_icons=true&theme=radical&count_private=true" alt="GitHub Stats" />
+
+---
+
 ## License
 
 MIT

@@ -180,6 +180,11 @@ public sealed class CopilotUsageData
     /// Estimated cost in USD based on model usage
     /// </summary>
     public double EstimatedCostUSD { get; set; }
+
+    /// <summary>
+    /// Available models for this Copilot account
+    /// </summary>
+    public List<CopilotModelInfo> AvailableModels { get; set; } = new();
 }
 
 /// <summary>
@@ -223,6 +228,71 @@ public sealed class CopilotQuotaSnapshot
 
     [JsonPropertyName("quota_id")]
     public string? QuotaId { get; set; }
+}
+
+/// <summary>
+/// Response from Copilot API token endpoint
+/// </summary>
+public sealed class CopilotAPITokenResponse
+{
+    [JsonPropertyName("token")]
+    public string? Token { get; set; }
+
+    [JsonPropertyName("expires_at")]
+    public long? ExpiresAt { get; set; }
+}
+
+/// <summary>
+/// Model info from Copilot models API
+/// </summary>
+public sealed class CopilotModelInfo
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = "";
+
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
+
+    [JsonPropertyName("model_picker_enabled")]
+    public bool? ModelPickerEnabled { get; set; }
+
+    [JsonPropertyName("model_picker_category")]
+    public string? ModelPickerCategory { get; set; }
+
+    [JsonPropertyName("vendor")]
+    public string? Vendor { get; set; }
+
+    [JsonPropertyName("preview")]
+    public bool? Preview { get; set; }
+
+    public bool IsAvailable => ModelPickerEnabled == true;
+    
+    /// <summary>
+    /// Get sort priority (newest/best models first)
+    /// </summary>
+    public int SortPriority => Id.ToLowerInvariant() switch
+    {
+        var id when id.Contains("claude") && id.Contains("opus") && id.Contains("4") => 1,
+        var id when id.Contains("gpt-5") || id.Contains("gpt5") => 2,
+        var id when id.Contains("o3") && !id.Contains("mini") => 3,
+        var id when id.Contains("o3-mini") => 4,
+        var id when id.Contains("gemini") && id.Contains("2.5") => 5,
+        var id when id.Contains("claude") && id.Contains("sonnet") && id.Contains("4") => 6,
+        var id when id.Contains("o1") && !id.Contains("mini") => 7,
+        var id when id.Contains("gpt-4o") => 8,
+        var id when id.Contains("claude") && id.Contains("3.5") => 9,
+        var id when id.Contains("gemini") => 10,
+        _ => 100
+    };
+}
+
+/// <summary>
+/// Response from Copilot models API
+/// </summary>
+public sealed class CopilotModelsResponse
+{
+    [JsonPropertyName("data")]
+    public List<CopilotModelInfo>? Data { get; set; }
 }
 
 /// <summary>
@@ -279,6 +349,13 @@ public static class CopilotUsageFetcher
         {
             billingData = await FetchUsageAsync(accessToken, cancellationToken);
             Log($"Billing API: TopModel={billingData.TopModel}, Models={billingData.ModelUsage.Count}");
+
+            // Also fetch available models
+            if (billingData != null)
+            {
+                billingData.AvailableModels = await FetchAvailableModelsAsync(accessToken, cancellationToken);
+                Log($"Fetched {billingData.AvailableModels.Count} available models");
+            }
         }
         catch (Exception ex)
         {
@@ -430,8 +507,32 @@ public static class CopilotUsageFetcher
             Tertiary = tertiary ?? internalResult.Tertiary,
             Cost = cost,
             Identity = internalResult.Identity,
+            AvailableModels = ConvertToAvailableModels(billingData.AvailableModels),
             FetchedAt = internalResult.FetchedAt
         };
+    }
+    
+    /// <summary>
+    /// Convert CopilotModelInfo list to AvailableModel list for UsageSnapshot
+    /// </summary>
+    private static List<AvailableModel>? ConvertToAvailableModels(List<CopilotModelInfo>? models)
+    {
+        if (models == null || models.Count == 0)
+            return null;
+            
+        return models
+            .Where(m => m.IsAvailable)
+            .OrderBy(m => m.SortPriority)
+            .ThenBy(m => m.Name)
+            .Select(m => new AvailableModel
+            {
+                Id = m.Id,
+                Name = m.Name ?? m.Id,
+                Vendor = m.Vendor,
+                Category = m.ModelPickerCategory,
+                IsPreview = m.Preview ?? false
+            })
+            .ToList();
     }
 
     /// <summary>
@@ -1040,6 +1141,7 @@ public static class CopilotUsageFetcher
             Tertiary = tertiary,
             Cost = cost,
             Identity = identity,
+            AvailableModels = ConvertToAvailableModels(usageData.AvailableModels),
             FetchedAt = DateTime.UtcNow
         };
     }
@@ -1116,6 +1218,84 @@ public static class CopilotUsageFetcher
     }
 
     // Removed unused CreateHttpClient method - use SharedHttpClient.Default with per-request headers instead
+
+    private const string TokenUrl = "https://api.github.com/copilot_internal/v2/token";
+    private const string ModelsUrl = "https://api.githubcopilot.com/models";
+
+    /// <summary>
+    /// Fetch available models for a Copilot account
+    /// </summary>
+    public static async Task<List<CopilotModelInfo>> FetchAvailableModelsAsync(string accessToken, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            // Step 1: Get Copilot API token from GitHub OAuth token
+            var apiToken = await FetchCopilotAPITokenAsync(accessToken, cancellationToken);
+            if (string.IsNullOrEmpty(apiToken))
+            {
+                Log("Failed to get Copilot API token");
+                return new List<CopilotModelInfo>();
+            }
+
+            // Step 2: Fetch models from Copilot API
+            return await FetchModelsFromCopilotAPIAsync(apiToken, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            Log($"FetchAvailableModels error: {ex.Message}");
+            return new List<CopilotModelInfo>();
+        }
+    }
+
+    private static async Task<string?> FetchCopilotAPITokenAsync(string accessToken, CancellationToken cancellationToken)
+    {
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(TimeoutSeconds) };
+        client.DefaultRequestHeaders.Add("Authorization", $"Bearer {accessToken}");
+        client.DefaultRequestHeaders.Add("Accept", "application/vnd.github+json");
+        client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
+        client.DefaultRequestHeaders.Add("User-Agent", "QuoteBar");
+
+        var response = await client.GetAsync(TokenUrl, cancellationToken);
+        var content = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        Log($"GET copilot_internal/v2/token: Status={response.StatusCode}");
+
+        if (!response.IsSuccessStatusCode)
+        {
+            Log($"Token API error: {content}");
+            return null;
+        }
+
+        var tokenResponse = JsonSerializer.Deserialize<CopilotAPITokenResponse>(content, JsonOptions);
+        return tokenResponse?.Token;
+    }
+
+    private static async Task<List<CopilotModelInfo>> FetchModelsFromCopilotAPIAsync(string apiToken, CancellationToken cancellationToken)
+    {
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(TimeoutSeconds) };
+        client.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiToken}");
+        client.DefaultRequestHeaders.Add("Accept", "application/json");
+        client.DefaultRequestHeaders.Add("User-Agent", "GithubCopilot/1.0");
+        client.DefaultRequestHeaders.Add("Editor-Version", "vscode/1.100.0");
+        client.DefaultRequestHeaders.Add("Editor-Plugin-Version", "copilot/1.300.0");
+
+        var response = await client.GetAsync(ModelsUrl, cancellationToken);
+        var content = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        Log($"GET models: Status={response.StatusCode}");
+
+        if (!response.IsSuccessStatusCode)
+        {
+            Log($"Models API error: {content}");
+            return new List<CopilotModelInfo>();
+        }
+
+        var modelsResponse = JsonSerializer.Deserialize<CopilotModelsResponse>(content, JsonOptions);
+        var models = modelsResponse?.Data ?? new List<CopilotModelInfo>();
+        
+        // Sort by priority (newest/best models first)
+        return models.Where(m => m.IsAvailable).OrderBy(m => m.SortPriority).ThenBy(m => m.Name).ToList();
+    }
 
     private static void Log(string message)
     {

@@ -24,16 +24,19 @@ public static class CurrencyFormatter
         /// <summary>Always display as JPY (¥)</summary>
         JPY,
         /// <summary>Always display as CNY (¥)</summary>
-        CNY
+        CNY,
+        /// <summary>Always display as PEN (S/.) - Peruvian Sol</summary>
+        PEN
     }
 
-    private static readonly Dictionary<CurrencyMode, (string Symbol, string Code, int Decimals)> CurrencyInfo = new()
+    private static readonly Dictionary<CurrencyMode, (string Symbol, string Code, int Decimals, double ExchangeRate)> CurrencyInfo = new()
     {
-        { CurrencyMode.USD, ("$", "USD", 2) },
-        { CurrencyMode.EUR, ("€", "EUR", 2) },
-        { CurrencyMode.GBP, ("£", "GBP", 2) },
-        { CurrencyMode.JPY, ("¥", "JPY", 0) },
-        { CurrencyMode.CNY, ("¥", "CNY", 2) }
+        { CurrencyMode.USD, ("$", "USD", 2, 1.0) },
+        { CurrencyMode.EUR, ("€", "EUR", 2, 0.92) },
+        { CurrencyMode.GBP, ("£", "GBP", 2, 0.79) },
+        { CurrencyMode.JPY, ("¥", "JPY", 0, 157.0) },
+        { CurrencyMode.CNY, ("¥", "CNY", 2, 7.30) },
+        { CurrencyMode.PEN, ("S/.", "PEN", 2, 3.75) }
     };
 
     /// <summary>
@@ -69,18 +72,21 @@ public static class CurrencyFormatter
     public static string FormatSmart(double amount, bool includeCode = false)
     {
         var mode = CurrentMode;
-        var (symbol, code, defaultDecimals) = GetCurrencyInfo(mode);
+        var (symbol, code, defaultDecimals, exchangeRate) = GetCurrencyInfo(mode);
 
-        // Determine precision based on amount
+        // Apply exchange rate conversion
+        var convertedAmount = amount * exchangeRate;
+
+        // Determine precision based on converted amount
         int decimals;
-        if (amount >= 1000)
+        if (convertedAmount >= 1000)
             decimals = 0;
-        else if (amount >= 10)
+        else if (convertedAmount >= 10)
             decimals = 1;
         else
             decimals = defaultDecimals;
 
-        var formatted = FormatAmount(amount, symbol, decimals);
+        var formatted = FormatAmount(convertedAmount, symbol, decimals);
 
         if (includeCode)
             return $"{formatted} {code}";
@@ -93,8 +99,11 @@ public static class CurrencyFormatter
     /// </summary>
     public static string FormatWithMode(double amount, CurrencyMode mode, bool includeCode = false)
     {
-        var (symbol, code, decimals) = GetCurrencyInfo(mode);
-        var formatted = FormatAmount(amount, symbol, decimals);
+        var (symbol, code, decimals, exchangeRate) = GetCurrencyInfo(mode);
+
+        // Apply exchange rate conversion
+        var convertedAmount = amount * exchangeRate;
+        var formatted = FormatAmount(convertedAmount, symbol, decimals);
 
         if (includeCode)
             return $"{formatted} {code}";
@@ -130,7 +139,7 @@ public static class CurrencyFormatter
         }
     }
 
-    private static (string Symbol, string Code, int Decimals) GetCurrencyInfo(CurrencyMode mode)
+    private static (string Symbol, string Code, int Decimals, double ExchangeRate) GetCurrencyInfo(CurrencyMode mode)
     {
         if (mode == CurrencyMode.System)
         {
@@ -143,7 +152,7 @@ public static class CurrencyFormatter
                 // JPY and other zero-decimal currencies
                 var decimals = nfi.CurrencyDecimalDigits;
 
-                return (nfi.CurrencySymbol, regionInfo.ISOCurrencySymbol, decimals);
+                return (nfi.CurrencySymbol, regionInfo.ISOCurrencySymbol, decimals, 1.0);
             }
             catch
             {
@@ -179,6 +188,7 @@ public static class CurrencyFormatter
             CurrencyMode.GBP => "British Pound (£)",
             CurrencyMode.JPY => "Japanese Yen (¥)",
             CurrencyMode.CNY => "Chinese Yuan (¥)",
+            CurrencyMode.PEN => "Peruvian Sol (S/.)",
             _ => mode.ToString()
         };
     }

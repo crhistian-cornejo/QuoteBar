@@ -53,7 +53,7 @@ public sealed class TrayPopupWindow : Window
     private Border _popupBorder = null!;
     private Border _logoContainer = null!;  // Container for logo (can hold Image or Path)
     private TextBlock _providerNameText = null!;
-    private TextBlock _planTypeText = null!;
+    private Controls.TierBadge _tierBadge = null!;
     private TextBlock _costText = null!;  // Cost display (e.g., "$5.20 this month")
     private FontIcon _pinIcon = null!;
 
@@ -72,11 +72,19 @@ public sealed class TrayPopupWindow : Window
     // Cost dashboard popup
     private CostDashboardPopup? _costDashboardPopup;
 
+    // Request history popup
+    private RequestHistoryPopup? _requestHistoryPopup;
+
     /// <summary>
     /// Returns true if the cost dashboard popup is currently visible
     /// Used to prevent the main popup from closing when showing the cost dashboard
     /// </summary>
     public bool IsCostDashboardOpen => _costDashboardPopup != null;
+
+    /// <summary>
+    /// Returns true if the request history popup is currently visible
+    /// </summary>
+    public bool IsRequestHistoryOpen => _requestHistoryPopup != null;
 
     public event Action? PointerEnteredPopup;
     public event Action? PointerExitedPopup;
@@ -102,6 +110,16 @@ public sealed class TrayPopupWindow : Window
     private const int DWMWA_CAPTION_COLOR = 35;
     private const int DWMWCP_ROUND = 2;
     private const int DWMWCP_ROUNDSMALL = 3;
+
+    // UI Layout constants
+    private const int PopupWidth = 340;
+    private const int PopupMinHeight = 300;
+    private const int PopupMaxHeight = 700;
+    private const int PopupMargin = 12;
+    private const int LogoSize = 36;
+    private const int TabIconSize = 14;
+    private const int HeaderLogoSize = 32;
+    private const int PointerExitGracePeriodMs = 300;
 
     [DllImport("user32.dll")]
     private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
@@ -171,9 +189,32 @@ public sealed class TrayPopupWindow : Window
         UpdateUI();
 
         Activated += OnWindowActivated;
+        Closed += OnWindowClosed;
 
         _isInitialized = true;
         DebugLogger.Log("TrayPopup", $"TrayPopupWindow created (CodexBar style, DarkMode={_isDarkMode})");
+    }
+
+    /// <summary>
+    /// Cleanup event subscriptions to prevent memory leaks
+    /// </summary>
+    private void OnWindowClosed(object sender, WindowEventArgs args)
+    {
+        _isInitialized = false;
+        
+        // Unsubscribe from service events
+        ThemeService.Instance.ThemeChanged -= OnThemeChanged;
+        SettingsService.Instance.SettingsChanged -= OnSettingsChanged;
+        
+        // Stop any running timers
+        _suppressPointerExitTimer?.Stop();
+        _suppressPointerExitTimer = null;
+        
+        // Close secondary popups
+        CloseCostDashboard();
+        CloseRequestHistoryPopup();
+        
+        DebugLogger.Log("TrayPopup", "TrayPopupWindow closed and cleaned up");
     }
 
     private void OnSettingsChanged()
@@ -673,8 +714,8 @@ public sealed class TrayPopupWindow : Window
                 {
                     Data = geometry,
                     Fill = new SolidColorBrush(iconColor),
-                    Width = 14,
-                    Height = 14,
+                    Width = TabIconSize,
+                    Height = TabIconSize,
                     Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
                     VerticalAlignment = VerticalAlignment.Center
                 };
@@ -689,7 +730,7 @@ public sealed class TrayPopupWindow : Window
         return new FontIcon
         {
             Glyph = provider.IconGlyph,
-            FontSize = 14,
+            FontSize = TabIconSize,
             Foreground = new SolidColorBrush(GetProviderIconColor(provider.Id))
         };
     }
@@ -775,16 +816,24 @@ public sealed class TrayPopupWindow : Window
 
     /// <summary>
     /// Get base SVG file name (non-themed version - we control color programmatically)
+    /// For Cursor, use white version in dark mode
     /// </summary>
     private string? GetBaseSvgFileName(string providerId)
     {
-        return providerId.ToLower() switch
+        var providerLower = providerId.ToLower();
+        
+        // Special case: Cursor uses white SVG in dark mode
+        if (providerLower == "cursor")
+        {
+            return _isDarkMode ? "cursor-white.svg" : "cursor.svg";
+        }
+        
+        return providerLower switch
         {
             "claude" => "claude.svg",
             "codex" => "openai.svg",
             "gemini" => "gemini.svg",
             "copilot" => "github-copilot.svg",
-            "cursor" => "cursor.svg",
             "droid" => "droid.svg",
             "antigravity" => "antigravity.svg",
             "zai" => "zai.svg",
@@ -848,10 +897,10 @@ public sealed class TrayPopupWindow : Window
         // Cancel any existing timer
         _suppressPointerExitTimer?.Stop();
         
-        // Create timer to re-enable pointer exit after 300ms
+        // Create timer to re-enable pointer exit after grace period
         _suppressPointerExitTimer = new DispatcherTimer
         {
-            Interval = TimeSpan.FromMilliseconds(300)
+            Interval = TimeSpan.FromMilliseconds(PointerExitGracePeriodMs)
         };
         _suppressPointerExitTimer.Tick += (s, e) =>
         {
@@ -942,14 +991,23 @@ public sealed class TrayPopupWindow : Window
         headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         // Logo container
-        _logoContainer = new Border { Width = 36, Height = 36 };
+        _logoContainer = new Border { Width = LogoSize, Height = LogoSize };
         LoadProviderLogo();
         Grid.SetColumn(_logoContainer, 0);
 
-        // Provider info
+        // Provider info - name row with badge
         var headerTextStack = new StackPanel
         {
             Margin = new Thickness(10, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Spacing = 4
+        };
+
+        // First row: Provider name + Tier badge
+        var nameRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
             VerticalAlignment = VerticalAlignment.Center
         };
 
@@ -958,18 +1016,17 @@ public sealed class TrayPopupWindow : Window
             Text = "Codex",
             FontSize = 15,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Foreground = new SolidColorBrush(PrimaryTextColor)
+            Foreground = new SolidColorBrush(PrimaryTextColor),
+            VerticalAlignment = VerticalAlignment.Center
         };
 
-        _planTypeText = new TextBlock
-        {
-            Text = "Not configured",
-            FontSize = 11,
-            Foreground = new SolidColorBrush(SecondaryTextColor)
-        };
+        _tierBadge = new Controls.TierBadge();
+        _tierBadge.VerticalAlignment = VerticalAlignment.Center;
 
-        headerTextStack.Children.Add(_providerNameText);
-        headerTextStack.Children.Add(_planTypeText);
+        nameRow.Children.Add(_providerNameText);
+        nameRow.Children.Add(_tierBadge);
+
+        headerTextStack.Children.Add(nameRow);
         Grid.SetColumn(headerTextStack, 1);
 
         // Right side: Cost display + subtle pin icon
@@ -1039,8 +1096,8 @@ public sealed class TrayPopupWindow : Window
                     {
                         Data = geometry,
                         Fill = new SolidColorBrush(iconColor),
-                        Width = 32,
-                        Height = 32,
+                        Width = HeaderLogoSize,
+                        Height = HeaderLogoSize,
                         Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
                         VerticalAlignment = VerticalAlignment.Center,
                         HorizontalAlignment = HorizontalAlignment.Center
@@ -1057,8 +1114,8 @@ public sealed class TrayPopupWindow : Window
             {
                 var logoImage = new Image
                 {
-                    Width = 36,
-                    Height = 36,
+                    Width = LogoSize,
+                    Height = LogoSize,
                     Source = new BitmapImage(new Uri(logoPath, UriKind.Absolute))
                 };
                 _logoContainer.Child = logoImage;
@@ -1120,6 +1177,7 @@ public sealed class TrayPopupWindow : Window
         AddFooterLink("\uE713", "Add Account...", null, OnAddAccountClick);
         _dashboardLink = AddFooterLink("\uE9D9", "Usage Dashboard", null, OnUsageDashboardClick);
         _statusPageLink = AddFooterLink("\uE946", "Status Page", null, OnStatusPageClick);
+        AddFooterLink("\uE81C", "Request History", null, OnRequestHistoryClick);
         
         // Update visibility based on current provider
         UpdateFooterLinksVisibility();
@@ -1198,6 +1256,53 @@ public sealed class TrayPopupWindow : Window
             }
             catch { }
         }
+    }
+
+    private void OnRequestHistoryClick()
+    {
+        // Close existing popup if open
+        CloseRequestHistoryPopup();
+
+        try
+        {
+            _requestHistoryPopup = new RequestHistoryPopup(_isDarkMode);
+            _requestHistoryPopup.Closed += () =>
+            {
+                _requestHistoryPopup = null;
+            };
+
+            // Position to the left of main popup
+            var mainPos = _appWindow.Position;
+            var mainSize = _appWindow.Size;
+            var popupX = mainPos.X - 350; // 340 width + 10 margin
+            var popupY = mainPos.Y;
+
+            // Ensure it stays on screen
+            var displayArea = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Primary);
+            var workArea = displayArea.WorkArea;
+            if (popupX < workArea.X + 8)
+            {
+                // If no room on left, position to the right
+                popupX = mainPos.X + mainSize.Width + 10;
+            }
+
+            _requestHistoryPopup.PositionAt(popupX, popupY);
+            _requestHistoryPopup.Show();
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("TrayPopup", "Failed to open request history popup", ex);
+        }
+    }
+
+    private void CloseRequestHistoryPopup()
+    {
+        try
+        {
+            _requestHistoryPopup?.Close();
+        }
+        catch { }
+        _requestHistoryPopup = null;
     }
     
     private string? GetDashboardUrl(string providerId)
@@ -1379,9 +1484,6 @@ public sealed class TrayPopupWindow : Window
 
     public void PositionNear(int iconX, int iconY, int iconWidth, int iconHeight, bool taskbarAtBottom = true)
     {
-        const int popupWidth = 340;
-        const int margin = 12;
-
         // Calculate dynamic height based on number of provider rows
         int popupHeight = CalculatePopupHeight();
 
@@ -1389,22 +1491,22 @@ public sealed class TrayPopupWindow : Window
 
         if (taskbarAtBottom)
         {
-            x = iconX + (iconWidth / 2) - (popupWidth / 2);
-            y = iconY - popupHeight - margin;
+            x = iconX + (iconWidth / 2) - (PopupWidth / 2);
+            y = iconY - popupHeight - PopupMargin;
         }
         else
         {
-            x = iconX + (iconWidth / 2) - (popupWidth / 2);
-            y = iconY + iconHeight + margin;
+            x = iconX + (iconWidth / 2) - (PopupWidth / 2);
+            y = iconY + iconHeight + PopupMargin;
         }
 
         var displayArea = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Primary);
         var workArea = displayArea.WorkArea;
 
-        x = Math.Max(workArea.X + 8, Math.Min(x, workArea.X + workArea.Width - popupWidth - 8));
+        x = Math.Max(workArea.X + 8, Math.Min(x, workArea.X + workArea.Width - PopupWidth - 8));
         y = Math.Max(workArea.Y + 8, Math.Min(y, workArea.Y + workArea.Height - popupHeight - 8));
 
-        _appWindow.MoveAndResize(new RectInt32(x, y, popupWidth, popupHeight));
+        _appWindow.MoveAndResize(new RectInt32(x, y, PopupWidth, popupHeight));
     }
 
     /// <summary>
@@ -1413,18 +1515,14 @@ public sealed class TrayPopupWindow : Window
     /// </summary>
     private int CalculatePopupHeight()
     {
-        const int popupWidth = 340;
-        const int minHeight = 300;
-        const int maxHeight = 700;
-
         try
         {
             // Measure the actual content to get desired height
-            _rootGrid.Measure(new Windows.Foundation.Size(popupWidth, double.PositiveInfinity));
+            _rootGrid.Measure(new Windows.Foundation.Size(PopupWidth, double.PositiveInfinity));
             var desiredHeight = (int)Math.Ceiling(_rootGrid.DesiredSize.Height);
 
             // Clamp to reasonable bounds
-            return Math.Max(minHeight, Math.Min(maxHeight, desiredHeight));
+            return Math.Max(PopupMinHeight, Math.Min(PopupMaxHeight, desiredHeight));
         }
         catch (Exception ex)
         {
@@ -1492,15 +1590,16 @@ public sealed class TrayPopupWindow : Window
 
     public void HidePopup()
     {
-        // Don't hide if cost dashboard is open - the user is interacting with it
-        if (IsCostDashboardOpen)
+        // Don't hide if cost dashboard or request history is open - the user is interacting with it
+        if (IsCostDashboardOpen || IsRequestHistoryOpen)
         {
-            DebugLogger.Log("TrayPopupWindow", "HidePopup blocked - cost dashboard is open");
+            DebugLogger.Log("TrayPopupWindow", "HidePopup blocked - secondary popup is open");
             return;
         }
 
-        // Close cost dashboard popup if open (safety check)
+        // Close secondary popups if open (safety check)
         CloseCostDashboard();
+        CloseRequestHistoryPopup();
 
         var hwnd = WindowNative.GetWindowHandle(this);
         ShowWindow(hwnd, 0);
@@ -1525,10 +1624,10 @@ public sealed class TrayPopupWindow : Window
             LoadProviderLogo();
         }
 
-        // Update cost display
+        // Update cost display (use locale-aware formatting)
         if (snapshot?.Cost != null && snapshot.Cost.TotalCostUSD > 0)
         {
-            _costText.Text = $"${snapshot.Cost.TotalCostUSD:F2}";
+            _costText.Text = FormatCost(snapshot.Cost.TotalCostUSD);
             _costText.Visibility = Visibility.Visible;
         }
         else
@@ -1537,8 +1636,8 @@ public sealed class TrayPopupWindow : Window
             _costText.Visibility = Visibility.Collapsed;
         }
 
-        // Update identity info
-        _planTypeText.Text = snapshot?.Identity?.PlanType ?? "Not configured";
+        // Update identity info with tier badge
+        _tierBadge.SetTier(snapshot?.Identity?.PlanType);
 
         // Clear and rebuild usage sections
         _usageSectionsPanel.Children.Clear();
@@ -1585,6 +1684,20 @@ public sealed class TrayPopupWindow : Window
         if (snapshot == null || provider == null)
         {
             AddUsageSection("5-hour window", 0, null, "No data");
+            return;
+        }
+
+        // Handle upgrade required case with special UI
+        if (snapshot.RequiresUpgrade && !string.IsNullOrEmpty(snapshot.UpgradeUrl))
+        {
+            AddUpgradeSection(snapshot.ErrorMessage ?? "Upgrade required", snapshot.UpgradeUrl, snapshot.Identity);
+            return;
+        }
+
+        // Handle session expired / requires re-authentication
+        if (snapshot.RequiresReauth)
+        {
+            AddReauthSection(snapshot.ProviderId, snapshot.ErrorMessage ?? "Session expired. Please log in again.");
             return;
         }
 
@@ -1635,6 +1748,12 @@ public sealed class TrayPopupWindow : Window
         if (snapshot.Cost != null)
         {
             AddCostSection(snapshot.Cost);
+        }
+
+        // Available models section (if available, e.g., for Copilot)
+        if (snapshot.AvailableModels != null && snapshot.AvailableModels.Count > 0)
+        {
+            AddAvailableModelsSection(snapshot.AvailableModels);
         }
     }
 
@@ -1745,6 +1864,283 @@ public sealed class TrayPopupWindow : Window
         _usageSectionsPanel.Children.Add(section);
     }
 
+    /// <summary>
+    /// Adds a special upgrade section when the current plan doesn't support the provider.
+    /// Shows a warning icon, message, plan info, and an upgrade button.
+    /// </summary>
+    private void AddUpgradeSection(string message, string upgradeUrl, ProviderIdentity? identity)
+    {
+        var section = new StackPanel 
+        { 
+            Spacing = 10,
+            Padding = new Thickness(0, 4, 0, 4)
+        };
+
+        // Warning icon with message
+        var warningRow = new StackPanel 
+        { 
+            Orientation = Orientation.Horizontal, 
+            Spacing = 8,
+            HorizontalAlignment = HorizontalAlignment.Center
+        };
+
+        var warningIcon = new FontIcon
+        {
+            Glyph = "\uE7BA", // Warning triangle
+            FontSize = 16,
+            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 180, 0)) // Orange/Yellow warning color
+        };
+
+        var warningText = new TextBlock
+        {
+            Text = message,
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = new SolidColorBrush(SecondaryTextColor),
+            MaxWidth = 260
+        };
+
+        warningRow.Children.Add(warningIcon);
+        warningRow.Children.Add(warningText);
+        section.Children.Add(warningRow);
+
+        // Current plan info with tier badge (if available)
+        if (identity != null && !string.IsNullOrEmpty(identity.PlanType))
+        {
+            var planRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Spacing = 6
+            };
+            
+            var planLabel = new TextBlock
+            {
+                Text = "Current plan:",
+                FontSize = 11,
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = new SolidColorBrush(TertiaryTextColor)
+            };
+            
+            var planBadge = Controls.TierBadge.Create(identity.PlanType);
+            
+            planRow.Children.Add(planLabel);
+            planRow.Children.Add(planBadge);
+            section.Children.Add(planRow);
+        }
+
+        // Upgrade button
+        var upgradeButton = new Button
+        {
+            Content = "Upgrade Plan",
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Padding = new Thickness(16, 8, 16, 8),
+            CornerRadius = new CornerRadius(6),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 124, 58, 237)), // Purple (Codex color)
+            Foreground = new SolidColorBrush(Colors.White),
+            BorderThickness = new Thickness(0)
+        };
+
+        upgradeButton.Click += (s, e) =>
+        {
+            try
+            {
+                DebugLogger.Log("TrayPopupWindow", $"Opening upgrade URL: {upgradeUrl}");
+                var psi = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = upgradeUrl,
+                    UseShellExecute = true
+                };
+                System.Diagnostics.Process.Start(psi);
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.LogError("TrayPopupWindow", "Failed to open upgrade URL", ex);
+            }
+        };
+
+        section.Children.Add(upgradeButton);
+        _usageSectionsPanel.Children.Add(section);
+    }
+
+    /// <summary>
+    /// Adds a re-authentication section when the session has expired.
+    /// Shows a warning icon, message, and a "Sign In" button.
+    /// </summary>
+    private void AddReauthSection(string providerId, string message)
+    {
+        var section = new StackPanel 
+        { 
+            Spacing = 10,
+            Padding = new Thickness(0, 4, 0, 4)
+        };
+
+        // Warning icon with message
+        var warningRow = new StackPanel 
+        { 
+            Orientation = Orientation.Horizontal, 
+            Spacing = 8,
+            HorizontalAlignment = HorizontalAlignment.Center
+        };
+
+        var warningIcon = new FontIcon
+        {
+            Glyph = "\uE72E", // Lock icon - session locked out
+            FontSize = 16,
+            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 100, 100)) // Red-ish warning color
+        };
+
+        var warningText = new TextBlock
+        {
+            Text = "Session expired",
+            FontSize = 13,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 100, 100))
+        };
+
+        warningRow.Children.Add(warningIcon);
+        warningRow.Children.Add(warningText);
+        section.Children.Add(warningRow);
+
+        // Detailed message
+        var detailText = new TextBlock
+        {
+            Text = "Please sign in again to continue tracking usage.",
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+            HorizontalTextAlignment = TextAlignment.Center,
+            Foreground = new SolidColorBrush(SecondaryTextColor),
+            MaxWidth = 260
+        };
+        section.Children.Add(detailText);
+
+        // Sign In button
+        var signInButton = new Button
+        {
+            Content = "Sign In",
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Padding = new Thickness(16, 10, 16, 10),
+            CornerRadius = new CornerRadius(6),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 59, 130, 246)), // Blue
+            Foreground = new SolidColorBrush(Colors.White),
+            BorderThickness = new Thickness(0)
+        };
+
+        signInButton.Click += async (s, e) =>
+        {
+            try
+            {
+                DebugLogger.Log("TrayPopupWindow", $"Re-login requested for provider: {providerId}");
+                await LaunchProviderLoginAsync(providerId);
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.LogError("TrayPopupWindow", "Failed to launch provider login", ex);
+            }
+        };
+
+        section.Children.Add(signInButton);
+
+        // Settings link
+        var settingsLink = new HyperlinkButton
+        {
+            Content = "Or configure in Settings",
+            HorizontalAlignment = HorizontalAlignment.Center,
+            FontSize = 11,
+            Padding = new Thickness(0)
+        };
+        settingsLink.Click += (s, e) => SettingsPageRequested?.Invoke("Providers");
+        section.Children.Add(settingsLink);
+
+        _usageSectionsPanel.Children.Add(section);
+    }
+
+    /// <summary>
+    /// Launches the login flow for a specific provider
+    /// </summary>
+    private async Task LaunchProviderLoginAsync(string providerId)
+    {
+        try
+        {
+            switch (providerId.ToLower())
+            {
+                case "augment":
+                    var augmentResult = await Core.Providers.Augment.AugmentLoginHelper.LaunchLoginAsync();
+                    if (augmentResult.IsSuccess)
+                    {
+                        DebugLogger.Log("TrayPopupWindow", "Augment login successful, refreshing...");
+                        _viewModel.RefreshCommand.Execute(null);
+                    }
+                    break;
+                    
+                case "cursor":
+                    var cursorWindow = new Views.CursorLoginWindow();
+                    cursorWindow.Activate();
+                    break;
+                    
+                case "droid":
+                    var droidWindow = new Views.DroidLoginWindow();
+                    droidWindow.Activate();
+                    break;
+                    
+                case "gemini":
+                    // Gemini uses OAuth - open settings
+                    SettingsPageRequested?.Invoke("Providers");
+                    break;
+                    
+                case "copilot":
+                    // Copilot uses OAuth device flow - open settings
+                    SettingsPageRequested?.Invoke("Providers");
+                    break;
+                    
+                case "claude":
+                    // Claude Code needs terminal login - open terminal with claude command
+                    LaunchClaudeLogin();
+                    break;
+                    
+                default:
+                    // For other providers, open settings
+                    SettingsPageRequested?.Invoke("Providers");
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("TrayPopupWindow", $"LaunchProviderLoginAsync failed for {providerId}", ex);
+            // Fallback to settings
+            SettingsPageRequested?.Invoke("Providers");
+        }
+    }
+
+    /// <summary>
+    /// Launch Claude Code login by opening a terminal with the claude command.
+    /// The user needs to run 'claude' to trigger the OAuth flow.
+    /// </summary>
+    private void LaunchClaudeLogin()
+    {
+        try
+        {
+            // Open Windows Terminal or cmd with claude command
+            // This will trigger the OAuth flow in Claude Code CLI
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = "/k claude",
+                UseShellExecute = true,
+                CreateNoWindow = false
+            };
+            
+            Process.Start(startInfo);
+            DebugLogger.Log("TrayPopupWindow", "Launched terminal for Claude login");
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("TrayPopupWindow", "Failed to launch Claude login terminal", ex);
+            // Fallback: open settings
+            SettingsPageRequested?.Invoke("Providers");
+        }
+    }
+
     private void AddCostSection(ProviderCost cost)
     {
         // Wrap in a Border for rounded corners and better hover styling
@@ -1822,6 +2218,183 @@ public sealed class TrayPopupWindow : Window
         };
 
         _usageSectionsPanel.Children.Add(container);
+    }
+
+    /// <summary>
+    /// Adds a section displaying available models for providers like Copilot
+    /// Shows top models as chips with vendor info
+    /// </summary>
+    private void AddAvailableModelsSection(List<AvailableModel> models)
+    {
+        var section = new StackPanel { Spacing = 6, Margin = new Thickness(0, 8, 0, 0) };
+
+        // Header
+        var headerRow = new Grid();
+        var headerText = new TextBlock
+        {
+            Text = "Available Models",
+            FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.Medium,
+            Foreground = new SolidColorBrush(SecondaryTextColor)
+        };
+
+        var countText = new TextBlock
+        {
+            Text = $"{models.Count} models",
+            FontSize = 10,
+            Foreground = new SolidColorBrush(TertiaryTextColor),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        headerRow.Children.Add(headerText);
+        headerRow.Children.Add(countText);
+        section.Children.Add(headerRow);
+
+        // Model chips - show top 6 models in a wrap panel style (2 rows of 3)
+        var modelsToShow = models.Take(6).ToList();
+        
+        // Use a grid for consistent chip sizing (2 columns)
+        var chipsGrid = new Grid { RowSpacing = 4, ColumnSpacing = 4 };
+        chipsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        chipsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        int rowCount = (int)Math.Ceiling(modelsToShow.Count / 2.0);
+        for (int i = 0; i < rowCount; i++)
+        {
+            chipsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        }
+
+        for (int i = 0; i < modelsToShow.Count; i++)
+        {
+            var model = modelsToShow[i];
+            var chip = CreateModelChip(model);
+            Grid.SetRow(chip, i / 2);
+            Grid.SetColumn(chip, i % 2);
+            chipsGrid.Children.Add(chip);
+        }
+
+        section.Children.Add(chipsGrid);
+
+        // Show "and X more" if there are more models
+        if (models.Count > 6)
+        {
+            var moreText = new TextBlock
+            {
+                Text = $"+ {models.Count - 6} more models available",
+                FontSize = 10,
+                Foreground = new SolidColorBrush(TertiaryTextColor),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 2, 0, 0)
+            };
+            section.Children.Add(moreText);
+        }
+
+        _usageSectionsPanel.Children.Add(section);
+    }
+
+    /// <summary>
+    /// Creates a model chip for display in the Available Models section
+    /// </summary>
+    private Border CreateModelChip(AvailableModel model)
+    {
+        var chipColor = GetModelVendorColor(model.Vendor);
+        var chipBgColor = Windows.UI.Color.FromArgb(30, chipColor.R, chipColor.G, chipColor.B);
+        
+        var chip = new Border
+        {
+            Background = new SolidColorBrush(chipBgColor),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(6, 3, 6, 3),
+            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(50, chipColor.R, chipColor.G, chipColor.B)),
+            BorderThickness = new Thickness(1)
+        };
+
+        var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+
+        // Model name
+        var displayName = FormatModelDisplayName(model.Name ?? model.Id);
+        var nameText = new TextBlock
+        {
+            Text = displayName,
+            FontSize = 10,
+            Foreground = new SolidColorBrush(PrimaryTextColor),
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxWidth = 100
+        };
+        content.Children.Add(nameText);
+
+        // Preview badge if applicable
+        if (model.IsPreview)
+        {
+            var previewBadge = new Border
+            {
+                Background = new SolidColorBrush(Windows.UI.Color.FromArgb(80, 255, 180, 0)),
+                CornerRadius = new CornerRadius(2),
+                Padding = new Thickness(3, 1, 3, 1)
+            };
+            previewBadge.Child = new TextBlock
+            {
+                Text = "β",
+                FontSize = 8,
+                Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 200, 140, 0))
+            };
+            content.Children.Add(previewBadge);
+        }
+
+        chip.Child = content;
+
+        // Tooltip with full info
+        var tooltipText = $"{model.Name ?? model.Id}";
+        if (!string.IsNullOrEmpty(model.Vendor))
+            tooltipText += $"\nVendor: {model.Vendor}";
+        if (!string.IsNullOrEmpty(model.Category))
+            tooltipText += $"\nCategory: {model.Category}";
+        if (model.IsPreview)
+            tooltipText += "\n(Preview)";
+        ToolTipService.SetToolTip(chip, tooltipText);
+
+        return chip;
+    }
+
+    /// <summary>
+    /// Get color for model vendor
+    /// </summary>
+    private Windows.UI.Color GetModelVendorColor(string? vendor)
+    {
+        return vendor?.ToLowerInvariant() switch
+        {
+            "anthropic" => Windows.UI.Color.FromArgb(255, 217, 119, 87),  // Claude orange
+            "openai" => Windows.UI.Color.FromArgb(255, 16, 163, 127),     // OpenAI green
+            "google" => Windows.UI.Color.FromArgb(255, 66, 133, 244),     // Google blue
+            "xai" => Windows.UI.Color.FromArgb(255, 100, 100, 100),       // Gray
+            _ => Windows.UI.Color.FromArgb(255, 124, 58, 237)             // Default purple
+        };
+    }
+
+    /// <summary>
+    /// Format model name for compact display
+    /// </summary>
+    private string FormatModelDisplayName(string name)
+    {
+        // Shorten common model names
+        return name switch
+        {
+            var n when n.Contains("claude-sonnet-4", StringComparison.OrdinalIgnoreCase) => "Sonnet 4",
+            var n when n.Contains("claude-3.5-sonnet", StringComparison.OrdinalIgnoreCase) => "Sonnet 3.5",
+            var n when n.Contains("claude-3-opus", StringComparison.OrdinalIgnoreCase) => "Opus 3",
+            var n when n.Contains("gpt-4o", StringComparison.OrdinalIgnoreCase) => "GPT-4o",
+            var n when n.Contains("gpt-4", StringComparison.OrdinalIgnoreCase) && !n.Contains("4o") => "GPT-4",
+            var n when n.Contains("o3-mini", StringComparison.OrdinalIgnoreCase) => "o3-mini",
+            var n when n.Contains("o3", StringComparison.OrdinalIgnoreCase) => "o3",
+            var n when n.Contains("o1-mini", StringComparison.OrdinalIgnoreCase) => "o1-mini",
+            var n when n.Contains("o1", StringComparison.OrdinalIgnoreCase) => "o1",
+            var n when n.Contains("gemini-2.0-flash", StringComparison.OrdinalIgnoreCase) => "Gemini 2 Flash",
+            var n when n.Contains("gemini-2.5", StringComparison.OrdinalIgnoreCase) => "Gemini 2.5",
+            var n when n.Contains("gemini", StringComparison.OrdinalIgnoreCase) => "Gemini",
+            _ => name.Length > 16 ? name.Substring(0, 14) + "..." : name
+        };
     }
 
     private async Task ShowCostDashboardPopupAsync()
@@ -2336,8 +2909,21 @@ public sealed class TrayPopupWindow : Window
                 e.Handled = true;
                 break;
 
-            // Tab - Next provider
+            // Tab - Next provider (Shift+Tab = previous)
             case VirtualKey.Tab:
+                var shiftPressed = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift)
+                    .HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
+                NavigateToNextProvider(forward: !shiftPressed);
+                e.Handled = true;
+                break;
+
+            // Arrow keys - Navigate between providers
+            case VirtualKey.Left:
+                NavigateToNextProvider(forward: false);
+                e.Handled = true;
+                break;
+
+            case VirtualKey.Right:
                 NavigateToNextProvider(forward: true);
                 e.Handled = true;
                 break;

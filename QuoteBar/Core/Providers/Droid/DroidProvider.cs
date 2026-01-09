@@ -153,7 +153,10 @@ public class DroidCLIAuthStrategy : IProviderFetchStrategy
     {
         ProviderId = "droid",
         ErrorMessage = message,
-        FetchedAt = DateTime.UtcNow
+        FetchedAt = DateTime.UtcNow,
+        RequiresReauth = message.Contains("expired", StringComparison.OrdinalIgnoreCase) ||
+                         message.Contains("sign in", StringComparison.OrdinalIgnoreCase) ||
+                         message.Contains("re-authenticate", StringComparison.OrdinalIgnoreCase)
     };
 
     private static void Log(string message) => DebugLogger.Log("DroidCLIAuthStrategy", message);
@@ -249,7 +252,10 @@ public class DroidStoredSessionStrategy : IProviderFetchStrategy
     {
         ProviderId = "droid",
         ErrorMessage = message,
-        FetchedAt = DateTime.UtcNow
+        FetchedAt = DateTime.UtcNow,
+        RequiresReauth = message.Contains("expired", StringComparison.OrdinalIgnoreCase) ||
+                         message.Contains("sign in", StringComparison.OrdinalIgnoreCase) ||
+                         message.Contains("re-authenticate", StringComparison.OrdinalIgnoreCase)
     };
 
     private static void Log(string message) => DebugLogger.Log("DroidStoredStrategy", message);

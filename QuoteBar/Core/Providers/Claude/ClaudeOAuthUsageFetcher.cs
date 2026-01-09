@@ -230,13 +230,24 @@ public static class ClaudeOAuthUsageFetcher
             };
         }
 
-        // Determine plan type from rate limit tier
-        var planType = credentials?.RateLimitTier ?? "Max";
-        if (planType.Contains("5", StringComparison.OrdinalIgnoreCase))
-            planType = "Max (Level 5)";
-        else if (planType.Contains("4", StringComparison.OrdinalIgnoreCase))
-            planType = "Max (Level 4)";
-        else if (planType.Contains("free", StringComparison.OrdinalIgnoreCase))
+        // Determine plan type from subscription type or rate limit tier
+        var planType = credentials?.SubscriptionType ?? credentials?.RateLimitTier ?? "Max";
+        
+        // Normalize plan type display
+        if (planType.Equals("max", StringComparison.OrdinalIgnoreCase))
+        {
+            // Check rate limit tier for level info
+            var tier = credentials?.RateLimitTier ?? "";
+            if (tier.Contains("5", StringComparison.OrdinalIgnoreCase))
+                planType = "Max (Level 5)";
+            else if (tier.Contains("4", StringComparison.OrdinalIgnoreCase))
+                planType = "Max (Level 4)";
+            else
+                planType = "Max";
+        }
+        else if (planType.Equals("pro", StringComparison.OrdinalIgnoreCase))
+            planType = "Pro";
+        else if (planType.Equals("free", StringComparison.OrdinalIgnoreCase))
             planType = "Free";
 
         return new UsageSnapshot

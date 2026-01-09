@@ -14,6 +14,7 @@ public sealed class ClaudeOAuthCredentials
     public DateTime? ExpiresAt { get; init; }
     public string[] Scopes { get; init; } = Array.Empty<string>();
     public string? RateLimitTier { get; init; }
+    public string? SubscriptionType { get; init; }
 
     public bool IsExpired => ExpiresAt.HasValue && DateTime.UtcNow >= ExpiresAt.Value;
 
@@ -48,7 +49,8 @@ public sealed class ClaudeOAuthCredentials
             RefreshToken = oauth.RefreshToken,
             ExpiresAt = expiresAt,
             Scopes = oauth.Scopes ?? Array.Empty<string>(),
-            RateLimitTier = oauth.RateLimitTier
+            RateLimitTier = oauth.RateLimitTier,
+            SubscriptionType = oauth.SubscriptionType
         };
     }
 
@@ -80,6 +82,9 @@ public sealed class ClaudeOAuthCredentials
 
         [JsonPropertyName("rateLimitTier")]
         public string? RateLimitTier { get; set; }
+
+        [JsonPropertyName("subscriptionType")]
+        public string? SubscriptionType { get; set; }
     }
 }
 

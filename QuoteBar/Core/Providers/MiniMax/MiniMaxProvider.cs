@@ -5,7 +5,10 @@ namespace QuoteBar.Core.Providers.MiniMax;
 
 /// <summary>
 /// MiniMax provider descriptor
-/// MiniMax is web-only - usage is fetched from the Coding Plan remains API using a session cookie header.
+/// MiniMax usage is fetched from the Coding Plan remains API.
+/// Supports two authentication methods:
+/// 1. Coding Plan API Key (preferred) - Get from Account/Coding Plan page
+/// 2. Session cookie header (fallback) - Copy from browser DevTools
 /// </summary>
 public class MiniMaxProviderDescriptor : ProviderDescriptor
 {
@@ -24,13 +27,94 @@ public class MiniMaxProviderDescriptor : ProviderDescriptor
 
     protected override void InitializeStrategies()
     {
+        // Try API Key first (more reliable), then fall back to cookies
+        AddStrategy(new MiniMaxApiKeyStrategy());
         AddStrategy(new MiniMaxCookieStrategy());
+    }
+}
+
+/// <summary>
+/// API Key-based strategy for MiniMax Coding Plan
+/// Uses Coding Plan API Key from Account/Coding Plan page
+/// This is the preferred method as it's more reliable than cookies
+/// </summary>
+public class MiniMaxApiKeyStrategy : IProviderFetchStrategy
+{
+    public string StrategyName => "API Key";
+    public int Priority => 10; // Higher priority than cookies
+    public StrategyType Type => StrategyType.Manual;
+
+    public Task<bool> CanExecuteAsync()
+    {
+        var apiKey = MiniMaxSettingsReader.GetApiKey();
+        var hasApiKey = !string.IsNullOrEmpty(apiKey);
+        Log($"CanExecute: hasApiKey={hasApiKey}");
+        return Task.FromResult(hasApiKey);
+    }
+
+    public async Task<UsageSnapshot> FetchAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            Log("FetchAsync called (API Key strategy)");
+            var apiKey = MiniMaxSettingsReader.GetApiKey();
+            
+            if (string.IsNullOrEmpty(apiKey))
+            {
+                Log("No API key configured");
+                return new UsageSnapshot
+                {
+                    ProviderId = "minimax",
+                    ErrorMessage = "MiniMax API key not configured. Get your Coding Plan API Key from Account/Coding Plan page.",
+                    FetchedAt = DateTime.UtcNow
+                };
+            }
+
+            var groupId = MiniMaxSettingsReader.GetGroupId();
+            Log($"Using API Key: {apiKey.Substring(0, Math.Min(8, apiKey.Length))}..., groupId={groupId ?? "none"}");
+
+            var usage = await MiniMaxUsageFetcher.FetchUsageWithApiKeyAsync(
+                apiKey,
+                groupId,
+                cancellationToken);
+
+            Log($"Fetch result: {(usage.ErrorMessage != null ? $"Error: {usage.ErrorMessage}" : $"Success - {usage.Primary?.UsedPercent}% used")}");
+            return usage;
+        }
+        catch (MiniMaxUsageException ex)
+        {
+            Log($"Fetch MiniMaxUsageException: {ex.Message}");
+            var isAuthError = ex.ErrorType == MiniMaxErrorType.InvalidCredentials;
+            return new UsageSnapshot
+            {
+                ProviderId = "minimax",
+                ErrorMessage = ex.Message,
+                FetchedAt = DateTime.UtcNow,
+                RequiresReauth = isAuthError
+            };
+        }
+        catch (Exception ex)
+        {
+            Log($"Fetch Exception: {ex.Message}\n{ex.StackTrace}");
+            return new UsageSnapshot
+            {
+                ProviderId = "minimax",
+                ErrorMessage = ex.Message,
+                FetchedAt = DateTime.UtcNow
+            };
+        }
+    }
+
+    private void Log(string message)
+    {
+        DebugLogger.Log("MiniMaxApiKeyStrategy", message);
     }
 }
 
 /// <summary>
 /// Cookie-based strategy for MiniMax
 /// Uses manual cookie header or environment variable
+/// Falls back to this if API Key is not available
 /// </summary>
 public class MiniMaxCookieStrategy : IProviderFetchStrategy
 {
@@ -92,11 +176,13 @@ public class MiniMaxCookieStrategy : IProviderFetchStrategy
         catch (MiniMaxUsageException ex)
         {
             Log($"Fetch MiniMaxUsageException: {ex.Message}");
+            var isAuthError = ex.ErrorType == MiniMaxErrorType.InvalidCredentials;
             return new UsageSnapshot
             {
                 ProviderId = "minimax",
                 ErrorMessage = ex.Message,
-                FetchedAt = DateTime.UtcNow
+                FetchedAt = DateTime.UtcNow,
+                RequiresReauth = isAuthError
             };
         }
         catch (Exception ex)
@@ -118,12 +204,90 @@ public class MiniMaxCookieStrategy : IProviderFetchStrategy
 }
 
 /// <summary>
-/// Reads and stores MiniMax cookie header securely
+/// Reads and stores MiniMax credentials securely
+/// Supports both API Key (preferred) and Cookie (fallback) methods
 /// </summary>
 public static class MiniMaxSettingsReader
 {
     public const string EnvVarCookie = "MINIMAX_COOKIE";
     public const string EnvVarCookieHeader = "MINIMAX_COOKIE_HEADER";
+    public const string EnvVarApiKey = "MINIMAX_API_KEY";
+    public const string EnvVarGroupId = "MINIMAX_GROUP_ID";
+
+    /// <summary>
+    /// Get Coding Plan API Key from secure storage or environment variable
+    /// Priority: 1. Windows Credential Manager, 2. Environment variable
+    /// </summary>
+    public static string? GetApiKey()
+    {
+        // First check secure credential store (Windows Credential Manager)
+        var apiKey = SecureCredentialStore.GetCredential(CredentialKeys.MinimaxApiKey);
+        if (!string.IsNullOrWhiteSpace(apiKey))
+            return CleanApiKey(apiKey);
+
+        // Then check environment variable (for CLI/automation scenarios)
+        apiKey = Environment.GetEnvironmentVariable(EnvVarApiKey);
+        if (!string.IsNullOrWhiteSpace(apiKey))
+            return CleanApiKey(apiKey);
+
+        return null;
+    }
+
+    /// <summary>
+    /// Store Coding Plan API Key securely in Windows Credential Manager
+    /// </summary>
+    public static bool StoreApiKey(string? apiKey)
+    {
+        var cleaned = CleanApiKey(apiKey);
+        if (string.IsNullOrWhiteSpace(cleaned))
+            return SecureCredentialStore.DeleteCredential(CredentialKeys.MinimaxApiKey);
+        
+        return SecureCredentialStore.StoreCredential(CredentialKeys.MinimaxApiKey, cleaned);
+    }
+
+    /// <summary>
+    /// Check if API Key is configured
+    /// </summary>
+    public static bool HasApiKey()
+    {
+        return !string.IsNullOrWhiteSpace(GetApiKey());
+    }
+
+    /// <summary>
+    /// Delete API Key from secure storage
+    /// </summary>
+    public static bool DeleteApiKey()
+    {
+        return SecureCredentialStore.DeleteCredential(CredentialKeys.MinimaxApiKey);
+    }
+
+    /// <summary>
+    /// Get Group ID from secure storage or environment variable
+    /// </summary>
+    public static string? GetGroupId()
+    {
+        var groupId = SecureCredentialStore.GetCredential(CredentialKeys.MinimaxGroupId);
+        if (!string.IsNullOrWhiteSpace(groupId))
+            return groupId.Trim();
+
+        groupId = Environment.GetEnvironmentVariable(EnvVarGroupId);
+        if (!string.IsNullOrWhiteSpace(groupId))
+            return groupId.Trim();
+
+        return null;
+    }
+
+    /// <summary>
+    /// Store Group ID securely
+    /// </summary>
+    public static bool StoreGroupId(string? groupId)
+    {
+        var cleaned = groupId?.Trim();
+        if (string.IsNullOrWhiteSpace(cleaned))
+            return SecureCredentialStore.DeleteCredential(CredentialKeys.MinimaxGroupId);
+        
+        return SecureCredentialStore.StoreCredential(CredentialKeys.MinimaxGroupId, cleaned);
+    }
 
     /// <summary>
     /// Get cookie header from secure storage or environment variable
@@ -174,5 +338,22 @@ public static class MiniMaxSettingsReader
     public static bool DeleteCookieHeader()
     {
         return SecureCredentialStore.DeleteCredential(CredentialKeys.MinimaxCookie);
+    }
+
+    private static string? CleanApiKey(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        var value = raw.Trim();
+
+        // Remove surrounding quotes if present
+        if ((value.StartsWith("\"") && value.EndsWith("\"")) ||
+            (value.StartsWith("'") && value.EndsWith("'")))
+        {
+            value = value.Substring(1, value.Length - 2);
+        }
+
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
 }

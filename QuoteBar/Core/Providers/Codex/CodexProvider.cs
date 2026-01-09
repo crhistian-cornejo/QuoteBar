@@ -17,26 +17,177 @@ public class CodexProviderDescriptor : ProviderDescriptor
     public override string PrimaryLabel => "Session";
     public override string SecondaryLabel => "Weekly";
     public override string? TertiaryLabel => "Sonnet";
-public override string? DashboardUrl => "https://chatgpt.com/codex/settings/usage";
+    public override string? DashboardUrl => "https://chatgpt.com/codex/settings/usage";
+
+    // Session resets every 5h, notify each time; Weekly notify only once
+    public override UsageWindowType PrimaryWindowType => UsageWindowType.Session;
+    public override UsageWindowType SecondaryWindowType => UsageWindowType.Weekly;
 
     public override bool SupportsOAuth => true;
     public override bool SupportsCLI => true;
 
     protected override void InitializeStrategies()
     {
+        // OAuth/Credentials has higher priority (2) - try first
+        AddStrategy(new CodexOAuthStrategy());
+        // CLI is fallback (1)
         AddStrategy(new CodexCLIStrategy());
+        // RPC is last resort (0)
         AddStrategy(new CodexRPCStrategy());
     }
 }
 
 /// <summary>
-/// CLI strategy parsing codex usage output - Primary strategy
-/// Based on actual codex CLI output format
+/// OAuth strategy for Codex using stored credentials
+/// This is the preferred method when credentials are available
+/// </summary>
+public class CodexOAuthStrategy : IProviderFetchStrategy
+{
+    public string StrategyName => "OAuth";
+    public int Priority => 3; // Highest priority - try first
+    public StrategyType Type => StrategyType.OAuth;
+
+    private CodexOAuthCredentials? _cachedCredentials;
+
+    public Task<bool> CanExecuteAsync()
+    {
+        try
+        {
+            // First check if we have stored credentials
+            if (CodexCredentialsStore.HasCredentials())
+            {
+                _cachedCredentials = CodexCredentialsStore.TryLoad();
+                if (_cachedCredentials != null && _cachedCredentials.IsValid)
+                {
+                    DebugLogger.Log("CodexOAuthStrategy", $"CanExecute: Found valid credentials");
+                    return Task.FromResult(true);
+                }
+            }
+
+            // If no stored credentials, check if CLI is authenticated by running a quick command
+            return Task.FromResult(false);
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("CodexOAuthStrategy", "CanExecute error", ex);
+            return Task.FromResult(false);
+        }
+    }
+
+    public async Task<UsageSnapshot> FetchAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            // Use cached credentials or reload
+            var credentials = _cachedCredentials ?? CodexCredentialsStore.TryLoad();
+            
+            if (credentials == null || !credentials.IsValid)
+            {
+                // If we have credentials but they're expired
+                if (credentials != null && credentials.IsExpired)
+                {
+                    return new UsageSnapshot
+                    {
+                        ProviderId = "codex",
+                        ErrorMessage = "Codex credentials expired. Run `codex auth login` to re-authenticate.",
+                        FetchedAt = DateTime.UtcNow
+                    };
+                }
+
+                // Fallback to CLI strategy
+                var cliStrategy = new CodexCLIStrategy();
+                if (await cliStrategy.CanExecuteAsync())
+                {
+                    return await cliStrategy.FetchAsync(cancellationToken);
+                }
+
+                return new UsageSnapshot
+                {
+                    ProviderId = "codex",
+                    ErrorMessage = "No Codex credentials available. Run `codex auth login` to authenticate.",
+                    FetchedAt = DateTime.UtcNow
+                };
+            }
+
+            // We have valid credentials - use CLI to fetch usage since Codex doesn't have a direct API
+            var strategy = new CodexCLIStrategy();
+            if (await strategy.CanExecuteAsync())
+            {
+                return await strategy.FetchAsync(cancellationToken);
+            }
+
+            // CLI not available - check plan and return appropriate response
+            var planType = credentials.PlanType?.ToLowerInvariant();
+            var isFreePlan = planType == "free" || string.IsNullOrEmpty(planType);
+            
+            if (isFreePlan)
+            {
+                return new UsageSnapshot
+                {
+                    ProviderId = "codex",
+                    ErrorMessage = "Codex requires ChatGPT Plus or Pro. Upgrade your plan to use Codex.",
+                    RequiresUpgrade = true,
+                    UpgradeUrl = "https://openai.com/chatgpt/pricing",
+                    Identity = new ProviderIdentity
+                    {
+                        PlanType = credentials.DisplayPlanType,
+                        Email = credentials.Email
+                    },
+                    FetchedAt = DateTime.UtcNow
+                };
+            }
+
+            // Return a basic snapshot showing we're authenticated with a supported plan
+            return new UsageSnapshot
+            {
+                ProviderId = "codex",
+                Primary = new RateWindow
+                {
+                    UsedPercent = 0,
+                    WindowMinutes = 300,
+                    ResetDescription = "in 5 hours"
+                },
+                Identity = new ProviderIdentity
+                {
+                    PlanType = credentials.DisplayPlanType,
+                    Email = credentials.Email
+                },
+                FetchedAt = DateTime.UtcNow
+            };
+        }
+        catch (CodexCredentialsException ex)
+        {
+            DebugLogger.LogError("CodexOAuthStrategy", $"Credentials error", ex);
+
+            return new UsageSnapshot
+            {
+                ProviderId = "codex",
+                ErrorMessage = ex.Message,
+                FetchedAt = DateTime.UtcNow
+            };
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("CodexOAuthStrategy", "Fetch error", ex);
+
+            return new UsageSnapshot
+            {
+                ProviderId = "codex",
+                ErrorMessage = ex.Message,
+                FetchedAt = DateTime.UtcNow
+            };
+        }
+    }
+}
+
+/// <summary>
+/// CLI strategy for Codex - verifies CLI is installed and uses credentials from auth.json
+/// Note: Codex CLI does not have a 'usage' or 'status' command, so we rely on the JWT in auth.json
 /// </summary>
 public class CodexCLIStrategy : IProviderFetchStrategy
 {
     public string StrategyName => "CLI";
-    public int Priority => 1; // Higher priority than RPC
+    public int Priority => 2; // Medium priority - after OAuth, before RPC
     public StrategyType Type => StrategyType.CLI;
 
     public async Task<bool> CanExecuteAsync()
@@ -65,333 +216,91 @@ public class CodexCLIStrategy : IProviderFetchStrategy
         }
     }
 
-    public async Task<UsageSnapshot> FetchAsync(CancellationToken cancellationToken = default)
+    public Task<UsageSnapshot> FetchAsync(CancellationToken cancellationToken = default)
     {
         try
         {
-            // Try to get usage info from codex CLI
-            var usageOutput = await RunCodexCommandAsync("usage", cancellationToken);
-
-            if (string.IsNullOrEmpty(usageOutput))
+            // Codex CLI doesn't have a usage/status command
+            // We read the plan info from the JWT stored in ~/.codex/auth.json
+            var credentials = CodexCredentialsStore.TryLoad();
+            
+            if (credentials == null)
             {
-                // Fallback: try status command
-                usageOutput = await RunCodexCommandAsync("status", cancellationToken);
-            }
-
-            if (string.IsNullOrEmpty(usageOutput))
-            {
-                return new UsageSnapshot
+                return Task.FromResult(new UsageSnapshot
                 {
                     ProviderId = "codex",
-                    ErrorMessage = "Failed to get usage from codex CLI",
+                    ErrorMessage = "Codex credentials not found. Run 'codex login' to authenticate.",
                     FetchedAt = DateTime.UtcNow
-                };
+                });
             }
-
-            return ParseCodexOutput(usageOutput);
+            
+            if (!credentials.IsValid)
+            {
+                return Task.FromResult(new UsageSnapshot
+                {
+                    ProviderId = "codex",
+                    ErrorMessage = credentials.IsExpired 
+                        ? "Codex credentials expired. Run 'codex login' to re-authenticate."
+                        : "Invalid Codex credentials. Run 'codex login' to authenticate.",
+                    FetchedAt = DateTime.UtcNow
+                });
+            }
+            
+            // Check if plan supports Codex - Free plan does NOT have Codex access
+            var planType = credentials.PlanType?.ToLowerInvariant();
+            var supportedPlans = new[] { "plus", "pro", "team", "enterprise" };
+            var isFreePlan = planType == "free" || string.IsNullOrEmpty(planType);
+            
+            if (isFreePlan)
+            {
+                DebugLogger.Log("CodexCLIStrategy", $"Plan '{planType ?? "unknown"}' does not support Codex, showing upgrade message");
+                
+                return Task.FromResult(new UsageSnapshot
+                {
+                    ProviderId = "codex",
+                    ErrorMessage = "Codex requires ChatGPT Plus or Pro. Upgrade your plan to use Codex.",
+                    RequiresUpgrade = true,
+                    UpgradeUrl = "https://openai.com/chatgpt/pricing",
+                    Identity = new ProviderIdentity
+                    {
+                        PlanType = credentials.DisplayPlanType,
+                        Email = credentials.Email
+                    },
+                    FetchedAt = DateTime.UtcNow
+                });
+            }
+            
+            // Plan supports Codex - show usage info
+            // Note: Codex doesn't expose usage/quota API, so we can only show the plan type
+            // The usage percentages would need to come from intercepting actual API calls
+            return Task.FromResult(new UsageSnapshot
+            {
+                ProviderId = "codex",
+                Primary = new RateWindow
+                {
+                    UsedPercent = 0, // Unknown - Codex doesn't expose this
+                    WindowMinutes = 300, // 5-hour session window
+                    ResetDescription = "Usage tracking via requests"
+                },
+                Identity = new ProviderIdentity
+                {
+                    PlanType = credentials.DisplayPlanType,
+                    Email = credentials.Email
+                },
+                FetchedAt = DateTime.UtcNow
+            });
         }
         catch (Exception ex)
         {
             DebugLogger.LogError("CodexCLIStrategy", $"ERROR: {ex.Message}", ex);
 
-            return new UsageSnapshot
+            return Task.FromResult(new UsageSnapshot
             {
                 ProviderId = "codex",
-                ErrorMessage = ex.Message,
+                ErrorMessage = $"Codex error: {ex.Message}",
                 FetchedAt = DateTime.UtcNow
-            };
+            });
         }
-    }
-
-    private async Task<string> RunCodexCommandAsync(string command, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = "codex",
-                Arguments = command,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-                StandardOutputEncoding = System.Text.Encoding.UTF8
-            };
-
-            using var process = Process.Start(startInfo);
-            if (process == null) return string.Empty;
-
-            var output = await process.StandardOutput.ReadToEndAsync(cancellationToken);
-            var error = await process.StandardError.ReadToEndAsync(cancellationToken);
-
-            await process.WaitForExitAsync(cancellationToken);
-
-            DebugLogger.Log("CodexCLIStrategy", $"codex {command} output:\n{output}\nstderr: {error}");
-
-            return output;
-        }
-        catch
-        {
-            return string.Empty;
-        }
-    }
-
-    private UsageSnapshot ParseCodexOutput(string output)
-    {
-        // Parse various formats of codex output
-        // Format 1: JSON output from "codex usage --json"
-        // Format 2: Plain text output from "codex usage" or "codex status"
-
-        // Try JSON parsing first
-        try
-        {
-            if (output.TrimStart().StartsWith("{") || output.TrimStart().StartsWith("["))
-            {
-                return ParseJsonOutput(output);
-            }
-        }
-        catch { }
-
-        // Parse plain text output
-        return ParsePlainTextOutput(output);
-    }
-
-    private UsageSnapshot ParseJsonOutput(string json)
-    {
-        var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
-
-        RateWindow? primary = null;
-        RateWindow? secondary = null;
-        RateWindow? tertiary = null;
-        ProviderIdentity? identity = null;
-
-        // Parse session/5-hour window
-        if (root.TryGetProperty("session", out var session) ||
-            root.TryGetProperty("5hour", out session) ||
-            root.TryGetProperty("primary", out session))
-        {
-            primary = ParseRateWindowFromJson(session, 300); // 5 hours = 300 minutes
-        }
-
-        // Parse weekly limit
-        if (root.TryGetProperty("weekly", out var weekly) ||
-            root.TryGetProperty("secondary", out weekly))
-        {
-            secondary = ParseRateWindowFromJson(weekly, 10080); // 7 days = 10080 minutes
-        }
-
-        // Parse additional limits (like Sonnet)
-        if (root.TryGetProperty("sonnet", out var sonnet) ||
-            root.TryGetProperty("tertiary", out sonnet))
-        {
-            tertiary = ParseRateWindowFromJson(sonnet, null);
-        }
-
-        // Parse identity
-        if (root.TryGetProperty("plan", out var plan) ||
-            root.TryGetProperty("planType", out plan))
-        {
-            identity = new ProviderIdentity
-            {
-                PlanType = plan.GetString() ?? "Max"
-            };
-        }
-
-        return new UsageSnapshot
-        {
-            ProviderId = "codex",
-            Primary = primary ?? new RateWindow { UsedPercent = 0, WindowMinutes = 300 },
-            Secondary = secondary,
-            Tertiary = tertiary,
-            Identity = identity ?? new ProviderIdentity { PlanType = "Max" },
-            FetchedAt = DateTime.UtcNow
-        };
-    }
-
-    private RateWindow ParseRateWindowFromJson(JsonElement element, int? defaultWindowMinutes)
-    {
-        double usedPercent = 0;
-        double? used = null;
-        double? limit = null;
-        DateTime? resetsAt = null;
-        string? resetDescription = null;
-
-        if (element.TryGetProperty("usedPercent", out var usedPercentEl) ||
-            element.TryGetProperty("percent", out usedPercentEl) ||
-            element.TryGetProperty("used_percent", out usedPercentEl))
-        {
-            usedPercent = usedPercentEl.GetDouble();
-        }
-
-        if (element.TryGetProperty("used", out var usedEl))
-        {
-            used = usedEl.GetDouble();
-        }
-
-        if (element.TryGetProperty("limit", out var limitEl))
-        {
-            limit = limitEl.GetDouble();
-        }
-
-        if (element.TryGetProperty("resetsAt", out var resetsAtEl) ||
-            element.TryGetProperty("resets_at", out resetsAtEl))
-        {
-            if (resetsAtEl.ValueKind == JsonValueKind.String)
-            {
-                if (DateTime.TryParse(resetsAtEl.GetString(), out var dt))
-                    resetsAt = dt;
-            }
-        }
-
-        if (element.TryGetProperty("resetsIn", out var resetsInEl) ||
-            element.TryGetProperty("resets_in", out resetsInEl))
-        {
-            resetDescription = resetsInEl.GetString();
-
-            // Try to parse resets_in to DateTime
-            if (!string.IsNullOrEmpty(resetDescription))
-            {
-                resetsAt = ParseResetsIn(resetDescription);
-            }
-        }
-
-        // Calculate percent from used/limit if not provided
-        if (usedPercent == 0 && used.HasValue && limit.HasValue && limit.Value > 0)
-        {
-            usedPercent = (used.Value / limit.Value) * 100;
-        }
-
-        return new RateWindow
-        {
-            UsedPercent = usedPercent,
-            Used = used,
-            Limit = limit,
-            WindowMinutes = defaultWindowMinutes,
-            ResetsAt = resetsAt,
-            ResetDescription = resetDescription
-        };
-    }
-
-    private UsageSnapshot ParsePlainTextOutput(string output)
-    {
-        // Parse text output like:
-        // "Session: 2% used (Resets in 3h 53m)"
-        // "Weekly: 3% used (Resets in 3d 20h)"
-        // "Sonnet: 0% used"
-
-        RateWindow? primary = null;
-        RateWindow? secondary = null;
-        RateWindow? tertiary = null;
-        string? planType = null;
-
-        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-
-        foreach (var line in lines)
-        {
-            var trimmed = line.Trim();
-
-            // Parse plan type
-            if (trimmed.Contains("Plan:") || trimmed.Contains("plan:"))
-            {
-                var match = Regex.Match(trimmed, @"[Pp]lan:\s*(.+)");
-                if (match.Success)
-                    planType = match.Groups[1].Value.Trim();
-                continue;
-            }
-
-            // Parse session/5-hour window
-            if (trimmed.StartsWith("Session", StringComparison.OrdinalIgnoreCase) ||
-                trimmed.StartsWith("5-hour", StringComparison.OrdinalIgnoreCase) ||
-                trimmed.StartsWith("5 hour", StringComparison.OrdinalIgnoreCase))
-            {
-                primary = ParseRateWindowFromText(trimmed, 300);
-            }
-            // Parse weekly limit
-            else if (trimmed.StartsWith("Weekly", StringComparison.OrdinalIgnoreCase))
-            {
-                secondary = ParseRateWindowFromText(trimmed, 10080);
-            }
-            // Parse Sonnet or other tertiary limits
-            else if (trimmed.StartsWith("Sonnet", StringComparison.OrdinalIgnoreCase) ||
-                     trimmed.StartsWith("Extra", StringComparison.OrdinalIgnoreCase))
-            {
-                tertiary = ParseRateWindowFromText(trimmed, null);
-            }
-        }
-
-        return new UsageSnapshot
-        {
-            ProviderId = "codex",
-            Primary = primary ?? new RateWindow
-            {
-                UsedPercent = 0,
-                WindowMinutes = 300,
-                ResetDescription = "in 5 hours"
-            },
-            Secondary = secondary,
-            Tertiary = tertiary,
-            Identity = new ProviderIdentity { PlanType = planType ?? "Max" },
-            FetchedAt = DateTime.UtcNow
-        };
-    }
-
-    private RateWindow ParseRateWindowFromText(string text, int? windowMinutes)
-    {
-        // Parse patterns like:
-        // "Session: 2% used (Resets in 3h 53m)"
-        // "Weekly: 3% used (Resets in 3d 20h)"
-        // "Sonnet: 0% used"
-        // "5-hour window: 15% | Resets in 2h 30m"
-
-        double usedPercent = 0;
-        string? resetDescription = null;
-        DateTime? resetsAt = null;
-
-        // Extract percentage
-        var percentMatch = Regex.Match(text, @"(\d+(?:\.\d+)?)\s*%");
-        if (percentMatch.Success)
-        {
-            usedPercent = double.Parse(percentMatch.Groups[1].Value);
-        }
-
-        // Extract reset time
-        var resetMatch = Regex.Match(text, @"[Rr]esets?\s+in\s+(.+?)(?:\)|$)");
-        if (resetMatch.Success)
-        {
-            resetDescription = resetMatch.Groups[1].Value.Trim();
-            resetsAt = ParseResetsIn(resetDescription);
-        }
-
-        return new RateWindow
-        {
-            UsedPercent = usedPercent,
-            WindowMinutes = windowMinutes,
-            ResetsAt = resetsAt,
-            ResetDescription = resetDescription != null ? $"in {resetDescription}" : null
-        };
-    }
-
-    private DateTime? ParseResetsIn(string resetsIn)
-    {
-        // Parse strings like "3h 53m", "3d 20h", "2h", "45m"
-        int totalMinutes = 0;
-
-        var daysMatch = Regex.Match(resetsIn, @"(\d+)\s*d");
-        var hoursMatch = Regex.Match(resetsIn, @"(\d+)\s*h");
-        var minutesMatch = Regex.Match(resetsIn, @"(\d+)\s*m");
-
-        if (daysMatch.Success)
-            totalMinutes += int.Parse(daysMatch.Groups[1].Value) * 24 * 60;
-        if (hoursMatch.Success)
-            totalMinutes += int.Parse(hoursMatch.Groups[1].Value) * 60;
-        if (minutesMatch.Success)
-            totalMinutes += int.Parse(minutesMatch.Groups[1].Value);
-
-        if (totalMinutes > 0)
-            return DateTime.UtcNow.AddMinutes(totalMinutes);
-
-        return null;
     }
 }
 
@@ -401,12 +310,21 @@ public class CodexCLIStrategy : IProviderFetchStrategy
 public class CodexRPCStrategy : IProviderFetchStrategy
 {
     public string StrategyName => "RPC";
-    public int Priority => 2;
+    public int Priority => 1; // Lowest priority - fallback only
     public StrategyType Type => StrategyType.AutoDetect;
 
     public async Task<bool> CanExecuteAsync()
     {
-        // Check if codex daemon is running
+        // RPC strategy should only be used if CLI strategy is not available
+        // Check if CLI strategy can execute first
+        var cliStrategy = new CodexCLIStrategy();
+        if (await cliStrategy.CanExecuteAsync())
+        {
+            // CLI is available, don't use RPC
+            return false;
+        }
+
+        // Check if codex daemon is running (only if CLI is not available)
         try
         {
             var processes = Process.GetProcessesByName("codex");

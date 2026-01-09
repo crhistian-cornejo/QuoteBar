@@ -6,8 +6,10 @@ using QuoteBar.TrayPopup;
 using QuoteBar.Core.Services;
 using QuoteBar.Helpers;
 using QuoteBar.Controls;
+using QuoteBar.Onboarding;
 using Microsoft.Extensions.DependencyInjection;
 using System;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.IO;
 using System.Threading.Tasks;
@@ -16,6 +18,12 @@ namespace QuoteBar;
 
 public partial class App : Application
 {
+    /// <summary>
+    /// Current onboarding version. Increment this to force users to see onboarding again.
+    /// Format: Major.Minor - bump when onboarding flow changes significantly.
+    /// </summary>
+    public const string CURRENT_ONBOARDING_VERSION = "1.0";
+
     private Window? _hiddenWindow;
     private QuoteBar.SettingsWindow? _settingsWindow;
     private ServiceProvider? _serviceProvider;
@@ -29,6 +37,7 @@ public partial class App : Application
     private HotkeyService? _hotkeyService;
     #pragma warning restore CS0649
     private TrayIconsService? _trayIconsService;
+    private OnboardingWindow? _onboardingWindow;
 
     /// <summary>
     /// Gets the service provider for dependency injection
@@ -150,6 +159,17 @@ public partial class App : Application
                 DebugLogger.LogError("App", "Failed to start provider status polling", ex);
             }
 
+            // Start Request Tracker (tracks API requests through SharedHttpClient)
+            try
+            {
+                RequestTracker.Instance.Start();
+                DebugLogger.Log("App", "Request tracker started");
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.LogError("App", "Failed to start request tracker", ex);
+            }
+
             // Initialize Update Service (checks GitHub releases)
             try
             {
@@ -167,10 +187,78 @@ public partial class App : Application
             ShowWindow(hwnd, 0);
 
             DebugLogger.Log("App", "Ready! Icon in system tray.");
+
+            // Show onboarding if first run or if onboarding version changed
+            if (ShouldShowOnboarding())
+            {
+                ShowOnboarding();
+            }
         }
         catch (Exception ex)
         {
             DebugLogger.LogError("App", "LAUNCH ERROR", ex);
+        }
+    }
+
+    /// <summary>
+    /// Determines if onboarding should be shown based on version comparison.
+    /// Returns true if:
+    /// - OnboardingCompleted is false (first run)
+    /// - OnboardingVersion is null/empty (upgrade from older version)
+    /// - OnboardingVersion is less than CURRENT_ONBOARDING_VERSION (force re-onboarding)
+    /// </summary>
+    private static bool ShouldShowOnboarding()
+    {
+        var settings = SettingsService.Instance.Settings;
+        
+        // First run - never completed onboarding
+        if (!settings.OnboardingCompleted)
+        {
+            DebugLogger.Log("App", "ShouldShowOnboarding: OnboardingCompleted=false, showing onboarding");
+            return true;
+        }
+        
+        // Upgrade from older version that didn't track onboarding version
+        if (string.IsNullOrEmpty(settings.OnboardingVersion))
+        {
+            DebugLogger.Log("App", "ShouldShowOnboarding: OnboardingVersion is null (upgrade from old version), showing onboarding");
+            return true;
+        }
+        
+        // Compare versions
+        if (CompareVersions(settings.OnboardingVersion, CURRENT_ONBOARDING_VERSION) < 0)
+        {
+            DebugLogger.Log("App", $"ShouldShowOnboarding: OnboardingVersion {settings.OnboardingVersion} < {CURRENT_ONBOARDING_VERSION}, showing onboarding");
+            return true;
+        }
+        
+        DebugLogger.Log("App", $"ShouldShowOnboarding: OnboardingVersion {settings.OnboardingVersion} >= {CURRENT_ONBOARDING_VERSION}, skipping");
+        return false;
+    }
+
+    /// <summary>
+    /// Compares two version strings. Returns negative if v1 < v2, 0 if equal, positive if v1 > v2.
+    /// </summary>
+    private static int CompareVersions(string v1, string v2)
+    {
+        try
+        {
+            var parts1 = v1.Split('.').Select(int.Parse).ToArray();
+            var parts2 = v2.Split('.').Select(int.Parse).ToArray();
+            
+            var maxLen = Math.Max(parts1.Length, parts2.Length);
+            for (int i = 0; i < maxLen; i++)
+            {
+                var p1 = i < parts1.Length ? parts1[i] : 0;
+                var p2 = i < parts2.Length ? parts2[i] : 0;
+                if (p1 != p2) return p1 - p2;
+            }
+            return 0;
+        }
+        catch
+        {
+            // If parsing fails, assume versions are different and show onboarding
+            return -1;
         }
     }
 
@@ -219,6 +307,7 @@ public partial class App : Application
         // Stop services and polling
         ProviderStatusService.Instance.StopPolling();
         UpdateService.Instance.StopPeriodicChecks();
+        RequestTracker.Instance.Stop();
 
         // Unsubscribe from events
         if (_usageStore != null)
@@ -388,6 +477,42 @@ public partial class App : Application
         catch (Exception ex)
         {
             DebugLogger.LogError("App", "SHOW SETTINGS ERROR", ex);
+        }
+    }
+
+    private void ShowOnboarding()
+    {
+        try
+        {
+            DebugLogger.Log("App", "Showing onboarding wizard");
+
+            if (_onboardingWindow == null)
+            {
+                _onboardingWindow = new OnboardingWindow();
+                _onboardingWindow.OnboardingCompleted += () =>
+                {
+                    DebugLogger.Log("App", "Onboarding completed - showing popup");
+                    _dispatcherQueue?.TryEnqueue(() =>
+                    {
+                        _onboardingWindow = null;
+                        // Show the popup after onboarding completes
+                        OnShowPopup();
+                    });
+                };
+                _onboardingWindow.Closed += (s, e) =>
+                {
+                    DebugLogger.Log("App", "Onboarding window closed");
+                    _onboardingWindow = null;
+                };
+            }
+
+            _onboardingWindow.Activate();
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(_onboardingWindow);
+            SetForegroundWindow(hwnd);
+        }
+        catch (Exception ex)
+        {
+            DebugLogger.LogError("App", "SHOW ONBOARDING ERROR", ex);
         }
     }
 

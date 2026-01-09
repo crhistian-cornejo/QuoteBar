@@ -1,0 +1,68 @@
+# Labeler configuration for actions/labeler
+# Auto-labels PRs based on changed files
+# https://github.com/actions/labeler
+
+# Core functionality
+core:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'QuoteBar/Core/**'
+      - 'QuoteBar/ViewModels/**'
+
+# UI changes
+ui:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'QuoteBar/Views/**'
+      - 'QuoteBar/Controls/**'
+      - 'QuoteBar/TrayPopup/**'
+      - 'QuoteBar/Settings/**'
+      - 'QuoteBar/Onboarding/**'
+      - '**/*.xaml'
+
+# Provider implementations
+providers:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'QuoteBar/Core/Providers/**'
+
+# Documentation
+documentation:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+
+# CI/CD and build
+ci:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '.github/**'
+      - 'installer/**'
+      - '**/*.csproj'
+      - '**/*.props'
+      - '**/*.targets'
+
+# Dependencies
+dependencies:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '**/packages.lock.json'
+      - '**/*.csproj'
+
+# Assets and resources
+assets:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'QuoteBar/Assets/**'
+      - '**/*.ico'
+      - '**/*.png'
+      - '**/*.svg'
+
+# Configuration
+config:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'QuoteBar/Core/Services/SettingsService.cs'
+      - 'QuoteBar/appsettings*.json'

@@ -128,6 +128,14 @@ public class SettingsService : IDisposable
 
 public class AppSettings
 {
+    // Onboarding
+    public bool OnboardingCompleted { get; set; } = false;
+    /// <summary>
+    /// The app version when onboarding was last completed.
+    /// If null or less than current onboarding version, show onboarding again.
+    /// </summary>
+    public string? OnboardingVersion { get; set; } = null;
+
     // General
     public bool StartAtLogin { get; set; } = true;
     public bool ShowInTaskbar { get; set; } = false;
@@ -147,11 +155,27 @@ public class AppSettings
     public bool TrayBadgeEnabled { get; set; } = false;
     public string TrayBadgeProvider { get; set; } = "claude"; // Single provider for tray badge
 
-    // Notifications
+    // Notifications - Master toggle
     public bool UsageAlertsEnabled { get; set; } = true;
+
+    // Granular notification toggles (like Quotio)
+    public bool NotifyOnQuotaWarning { get; set; } = true;
+    public bool NotifyOnQuotaCritical { get; set; } = true;
+    public bool NotifyOnProviderStatus { get; set; } = true;
+    public bool NotifyOnUpgradeAvailable { get; set; } = true;
+
+    // Threshold settings
+    // QuotaAlertThreshold: remaining % at which to alert (10, 20, 30, 50)
+    // This is REMAINING quota, not used - so 20 means "alert when 20% remaining" (80% used)
+    public int QuotaAlertThreshold { get; set; } = 20;
+    // Legacy thresholds (used %) - kept for backwards compatibility
     public int WarningThreshold { get; set; } = 70;
     public int CriticalThreshold { get; set; } = 90;
+
     public bool PlaySound { get; set; } = false;
+
+    // Privacy Mode - mask emails in UI
+    public bool PrivacyModeEnabled { get; set; } = false;
 
     // Provider visibility (which providers show in popup)
     public HashSet<string> EnabledProviders { get; set; } = new() { "codex", "claude", "cursor", "gemini", "copilot", "droid", "antigravity", "zai", "augment" };

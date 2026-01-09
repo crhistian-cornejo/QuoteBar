@@ -1,0 +1,68 @@
+name: Dependency Updates
+
+on:
+  schedule:
+    # Run weekly on Sunday at 00:00 UTC
+    - cron: '0 0 * * 0'
+  # Allow manual trigger
+  workflow_dispatch:
+
+jobs:
+  check-updates:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '9.0.x'
+
+    - name: Check for outdated packages
+      id: outdated
+      run: |
+        cd QuoteBar
+        echo "Checking for outdated packages..."
+        dotnet list package --outdated --include-transitive > outdated_packages.txt
+        
+        # Check if there are outdated packages
+        if grep -q "has the following updates:" outdated_packages.txt; then
+          echo "outdated=true" >> $GITHUB_OUTPUT
+          cat outdated_packages.txt
+        else
+          echo "outdated=false" >> $GITHUB_OUTPUT
+          echo "All packages are up to date" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Create issue for outdated packages
+      if: steps.outdated.outputs.outdated == 'true'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const outdated = fs.readFileSync('QuoteBar/outdated_packages.txt', 'utf8');
+          
+          const body = `## Outdated NuGet Packages Detected
+          
+The following packages have newer versions available:
+
+\`\`\`
+${outdated}
+\`\`\`
+
+Please review and update as needed.`;
+          
+          github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: '[Dependency Update] NuGet packages outdated',
+            body: body,
+            labels: ['dependencies', 'auto-generated']
+          });
+
+    # Note: This workflow only REPORTS outdated packages via issue.
+    # Actual updates should be done manually or via Dependabot.
+    # The create-pull-request step is removed because dotnet list --outdated
+    # doesn't modify any files - it only reports.

@@ -20,6 +20,7 @@ using QuoteBar.Core.Providers.Zai;
 using QuoteBar.Core.Providers.Augment;
 using QuoteBar.Core.Providers.MiniMax;
 using QuoteBar.Core.Services;
+using QuoteBar.Helpers;
 using QuoteBar.Settings.Controls;
 using QuoteBar.Settings.Helpers;
 using QuoteBar.Views;
@@ -634,7 +635,7 @@ public class ProvidersSettingsPage : ISettingsPage
         string instructions = providerId.ToLower() switch
         {
             "gemini" => "To connect Gemini:\n\n1. Install the Gemini CLI\n2. Run: gemini auth login\n3. Complete OAuth in browser\n4. Click 'Retry Detection'",
-            "codex" => "To connect Codex:\n\n1. Install the Codex CLI\n2. Run: codex auth login\n3. Click 'Retry Detection'",
+            "codex" => GetCodexInstructions(),
             "claude" => "To connect Claude:\n\n1. Install the Claude CLI\n2. Run: claude auth login\n3. Complete OAuth in browser\n4. Click 'Retry Detection'",
             "antigravity" => "To connect Antigravity:\n\n1. Launch Antigravity IDE\n2. Make sure it's running and logged in\n3. Click 'Retry Detection'",
             _ => $"Configuration for {name} is not yet available."
@@ -660,6 +661,83 @@ public class ProvidersSettingsPage : ISettingsPage
             }
             RequestRefresh?.Invoke();
         }
+    }
+
+    private string GetCodexInstructions()
+    {
+        var instructions = new System.Text.StringBuilder();
+        instructions.AppendLine("To connect Codex:");
+        instructions.AppendLine();
+        
+        // First check credentials store
+        var hasCredentials = CodexCredentialsStore.HasCredentials();
+        var credentials = hasCredentials ? CodexCredentialsStore.TryLoad() : null;
+        var isAuthenticatedViaCredentials = credentials != null && credentials.IsValid;
+        
+        // Check if CLI is installed
+        var cliInstalled = CanDetectCLI("codex", "--version");
+        
+        if (!cliInstalled && !hasCredentials)
+        {
+            instructions.AppendLine("1. Install the Codex CLI");
+            instructions.AppendLine("   (Make sure 'codex' command is in your PATH)");
+            instructions.AppendLine();
+            instructions.AppendLine("2. Run: codex auth login");
+            instructions.AppendLine();
+            instructions.AppendLine("3. Click 'Retry Detection'");
+        }
+        else if (isAuthenticatedViaCredentials)
+        {
+            instructions.AppendLine("✓ Codex is authenticated");
+            if (!string.IsNullOrEmpty(credentials?.Email))
+            {
+                instructions.AppendLine($"   Email: {PrivacyHelper.MaskEmail(credentials.Email)}");
+            }
+            instructions.AppendLine();
+            instructions.AppendLine("If QuoteBar still shows 'Not configured', try:");
+            instructions.AppendLine("• Click 'Retry Detection'");
+            instructions.AppendLine("• Restart QuoteBar");
+        }
+        else if (cliInstalled)
+        {
+            instructions.AppendLine("✓ Codex CLI is installed");
+            instructions.AppendLine();
+            
+            // Try to check if authenticated via CLI command
+            var usageResult = TryRunCodexCommand("usage");
+            var statusResult = TryRunCodexCommand("status");
+            
+            var isAuthenticatedViaCLI = (!string.IsNullOrEmpty(usageResult) && !usageResult.Contains("not authenticated", StringComparison.OrdinalIgnoreCase) && !usageResult.Contains("login", StringComparison.OrdinalIgnoreCase))
+                               || (!string.IsNullOrEmpty(statusResult) && !statusResult.Contains("not authenticated", StringComparison.OrdinalIgnoreCase) && !statusResult.Contains("login", StringComparison.OrdinalIgnoreCase));
+            
+            if (!isAuthenticatedViaCLI)
+            {
+                instructions.AppendLine("⚠ Codex CLI is installed but not authenticated");
+                instructions.AppendLine();
+                instructions.AppendLine("1. Run: codex auth login");
+                instructions.AppendLine();
+                instructions.AppendLine("2. Click 'Retry Detection'");
+            }
+            else
+            {
+                instructions.AppendLine("✓ Codex CLI is authenticated");
+                instructions.AppendLine();
+                instructions.AppendLine("If QuoteBar still shows 'Not configured', try:");
+                instructions.AppendLine("• Click 'Retry Detection'");
+                instructions.AppendLine("• Restart QuoteBar");
+                instructions.AppendLine("• Check if 'codex' command works in terminal");
+            }
+        }
+        else
+        {
+            instructions.AppendLine("Credentials found but may be incomplete.");
+            instructions.AppendLine();
+            instructions.AppendLine("1. Run: codex auth login");
+            instructions.AppendLine();
+            instructions.AppendLine("2. Click 'Retry Detection'");
+        }
+        
+        return instructions.ToString();
     }
 
     private async Task LaunchCopilotLoginAsync()
@@ -926,6 +1004,9 @@ public class ProvidersSettingsPage : ISettingsPage
                 case "claude":
                     ClaudeOAuthCredentialsStore.InvalidateCache();
                     break;
+                case "codex":
+                    CodexCredentialsStore.InvalidateCache();
+                    break;
                 case "gemini":
                     GeminiOAuthCredentialsStore.InvalidateCache();
                     break;
@@ -1001,8 +1082,14 @@ public class ProvidersSettingsPage : ISettingsPage
                     DebugLogger.Log("ProvidersSettingsPage", $"Augment: cleared credentials, success={success}");
                     break;
 
+                case "codex":
+                    // Codex uses CLI credentials - just invalidate our cache
+                    CodexCredentialsStore.InvalidateCache();
+                    DebugLogger.Log("ProvidersSettingsPage", "Codex: invalidated credential cache");
+                    break;
+
                 default:
-                    // For CLI-based providers (claude, codex, gemini), we don't clear external credentials
+                    // For CLI-based providers (claude, gemini), we don't clear external credentials
                     DebugLogger.Log("ProvidersSettingsPage", $"{providerId}: no QuoteBar-specific credentials to clear");
                     return;
             }
@@ -1034,7 +1121,9 @@ public class ProvidersSettingsPage : ISettingsPage
             "cursor" => CursorSessionStore.HasSession(),
             "droid" => DroidSessionStore.HasSession(),
             "augment" => AugmentCredentialStore.HasCredentials(),
-            _ => false // CLI-based providers don't have clearable credentials
+            // Note: codex/claude/gemini use CLI credentials that belong to those tools,
+            // not QuoteBar, so we don't offer to clear them here
+            _ => false
         };
     }
 
@@ -1066,14 +1155,36 @@ public class ProvidersSettingsPage : ISettingsPage
                     break;
 
                 case "codex":
-                    // Check for Codex CLI credentials
-                    var codexPaths = new[]
+                    // Check using CodexCredentialsStore (handles multiple credential locations)
+                    if (CodexCredentialsStore.HasCredentials())
                     {
-                        System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex", "credentials.json"),
-                        System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "codex", "credentials.json")
-                    };
-                    if (codexPaths.Any(System.IO.File.Exists))
-                        return (true, "CLI configured");
+                        var codexCreds = CodexCredentialsStore.TryLoad();
+                        if (codexCreds != null && codexCreds.IsValid)
+                        {
+                            var codexStatus = !string.IsNullOrEmpty(codexCreds.Email)
+                                ? $"Authenticated ({PrivacyHelper.MaskEmail(codexCreds.Email)})"
+                                : "Authenticated";
+                            return (true, codexStatus);
+                        }
+                        return (true, "Credentials found");
+                    }
+                    
+                    // Also try to verify by running codex command directly
+                    if (CanDetectCLI("codex", "--version"))
+                    {
+                        // Try to get actual usage to verify authentication
+                        try
+                        {
+                            var testResult = TryRunCodexCommand("usage");
+                            if (!string.IsNullOrEmpty(testResult) && !testResult.Contains("not authenticated", StringComparison.OrdinalIgnoreCase) 
+                                && !testResult.Contains("login", StringComparison.OrdinalIgnoreCase))
+                            {
+                                return (true, "CLI authenticated");
+                            }
+                        }
+                        catch { }
+                        // CLI is installed but may not be authenticated
+                    }
                     break;
 
                 case "cursor":
@@ -1159,7 +1270,44 @@ public class ProvidersSettingsPage : ISettingsPage
             switch (providerId.ToLower())
             {
                 case "codex":
-                    if (CanDetectCLI("codex", "--version")) return (true, "CLI detected");
+                    // First check stored credentials
+                    if (CodexCredentialsStore.HasCredentials())
+                    {
+                        var codexCreds = CodexCredentialsStore.TryLoad();
+                        if (codexCreds != null && codexCreds.IsValid)
+                        {
+                            return (true, "Authenticated");
+                        }
+                    }
+                    
+                    // Then try CLI detection
+                    if (CanDetectCLI("codex", "--version"))
+                    {
+                        // Try to verify authentication by running actual command
+                        try
+                        {
+                            var usageResult = TryRunCodexCommand("usage");
+                            if (!string.IsNullOrEmpty(usageResult) && !usageResult.Contains("not authenticated", StringComparison.OrdinalIgnoreCase)
+                                && !usageResult.Contains("login", StringComparison.OrdinalIgnoreCase))
+                            {
+                                return (true, "Authenticated");
+                            }
+                            
+                            // Try status command as fallback
+                            var statusResult = TryRunCodexCommand("status");
+                            if (!string.IsNullOrEmpty(statusResult) && !statusResult.Contains("not authenticated", StringComparison.OrdinalIgnoreCase)
+                                && !statusResult.Contains("login", StringComparison.OrdinalIgnoreCase))
+                            {
+                                return (true, "Authenticated");
+                            }
+                            
+                            return (false, "CLI detected (not authenticated)");
+                        }
+                        catch
+                        {
+                            return (false, "CLI detected (auth unknown)");
+                        }
+                    }
                     break;
                 case "claude":
                     if (CanDetectCLI("claude", "--version")) return (true, "CLI detected");
@@ -1215,6 +1363,50 @@ public class ProvidersSettingsPage : ISettingsPage
         catch
         {
             return false;
+        }
+    }
+
+    private string? TryRunCodexCommand(string command)
+    {
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "codex",
+                Arguments = command,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+                StandardOutputEncoding = System.Text.Encoding.UTF8
+            };
+
+            using var process = Process.Start(startInfo);
+            if (process == null) return null;
+
+            var output = process.StandardOutput.ReadToEnd();
+            var error = process.StandardError.ReadToEnd();
+
+            var completed = process.WaitForExit(3000);
+            if (!completed)
+            {
+                try { process.Kill(); } catch { }
+                return null;
+            }
+
+            // Return output if successful, otherwise check error
+            if (process.ExitCode == 0 && !string.IsNullOrWhiteSpace(output))
+                return output;
+            
+            // Sometimes codex outputs to stderr even on success
+            if (!string.IsNullOrWhiteSpace(error) && !error.Contains("error", StringComparison.OrdinalIgnoreCase))
+                return error;
+
+            return null;
+        }
+        catch
+        {
+            return null;
         }
     }
 

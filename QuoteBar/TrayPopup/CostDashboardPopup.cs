@@ -29,7 +29,6 @@ public sealed class CostDashboardPopup : Window
     private readonly AppWindow _appWindow;
     private StackPanel _contentPanel = null!;
     private bool _isClosing;
-    private bool _allowLightDismiss;
     private DateTime _createdAt;
 
     /// <summary>
@@ -114,8 +113,7 @@ public sealed class CostDashboardPopup : Window
         else if (args.WindowActivationState == WindowActivationState.CodeActivated ||
                  args.WindowActivationState == WindowActivationState.PointerActivated)
         {
-            // Window is now active - allow light dismiss
-            _allowLightDismiss = true;
+            // Window is now active
         }
     }
 
@@ -217,7 +215,9 @@ public sealed class CostDashboardPopup : Window
             var headerPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
 
             // Provider color indicator
-            var provider = ProviderRegistry.Instance.GetProvider(_providerId);
+            var provider = !string.IsNullOrEmpty(_providerId) 
+                ? ProviderRegistry.Instance.GetProvider(_providerId) 
+                : null;
             var providerColor = AccentColor;
             if (provider != null && !string.IsNullOrEmpty(provider.PrimaryColor))
             {

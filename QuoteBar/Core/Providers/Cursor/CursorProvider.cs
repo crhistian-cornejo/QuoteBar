@@ -150,7 +150,9 @@ public class CursorManualCookieStrategy : IProviderFetchStrategy
     {
         ProviderId = "cursor",
         ErrorMessage = message,
-        FetchedAt = DateTime.UtcNow
+        FetchedAt = DateTime.UtcNow,
+        RequiresReauth = message.Contains("expired", StringComparison.OrdinalIgnoreCase) ||
+                         message.Contains("sign in", StringComparison.OrdinalIgnoreCase)
     };
 
     private static void Log(string message)
@@ -226,8 +228,14 @@ public class CursorStoredSessionStrategy : IProviderFetchStrategy
     {
         ProviderId = "cursor",
         ErrorMessage = message,
-        FetchedAt = DateTime.UtcNow
+        FetchedAt = DateTime.UtcNow,
+        RequiresReauth = IsSessionExpiredError(message)
     };
+
+    private static bool IsSessionExpiredError(string message) =>
+        message.Contains("expired", StringComparison.OrdinalIgnoreCase) ||
+        message.Contains("sign in", StringComparison.OrdinalIgnoreCase) ||
+        message.Contains("Not signed in", StringComparison.OrdinalIgnoreCase);
 
     private static void Log(string message)
     {

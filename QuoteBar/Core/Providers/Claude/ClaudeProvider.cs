@@ -88,6 +88,7 @@ public class ClaudeOAuthStrategy : IProviderFetchStrategy
                 {
                     ProviderId = "claude",
                     ErrorMessage = "No OAuth credentials available. Run `claude` to authenticate.",
+                    RequiresReauth = true,
                     FetchedAt = DateTime.UtcNow
                 };
             }
@@ -98,6 +99,7 @@ public class ClaudeOAuthStrategy : IProviderFetchStrategy
                 {
                     ProviderId = "claude",
                     ErrorMessage = "OAuth token expired. Run `claude` to re-authenticate.",
+                    RequiresReauth = true,
                     FetchedAt = DateTime.UtcNow
                 };
             }
@@ -114,10 +116,14 @@ public class ClaudeOAuthStrategy : IProviderFetchStrategy
         {
             DebugLogger.LogError("ClaudeOAuthStrategy", $"Fetch error: {ex.ErrorType}", ex);
 
+            // Set RequiresReauth for authentication errors
+            var requiresReauth = ex.ErrorType == ClaudeOAuthFetchError.Unauthorized;
+
             return new UsageSnapshot
             {
                 ProviderId = "claude",
                 ErrorMessage = ex.Message,
+                RequiresReauth = requiresReauth,
                 FetchedAt = DateTime.UtcNow
             };
         }

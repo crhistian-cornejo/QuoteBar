@@ -21,22 +21,107 @@ public static class MiniMaxUsageFetcher
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
 
+    /// <summary>
+    /// Fetch usage using Coding Plan API Key (preferred method)
+    /// </summary>
+    public static async Task<UsageSnapshot> FetchUsageWithApiKeyAsync(
+        string apiKey,
+        string? groupId = null,
+        CancellationToken cancellationToken = default)
+    {
+        const int maxRetries = 2;
+        Exception? lastException = null;
+
+        for (int attempt = 0; attempt <= maxRetries; attempt++)
+        {
+            try
+            {
+                if (attempt > 0)
+                {
+                    Log($"Retry attempt {attempt}/{maxRetries}");
+                    await Task.Delay(1000 * attempt, cancellationToken); // Exponential backoff
+                }
+
+                return await FetchCodingPlanRemainsWithApiKeyAsync(apiKey, groupId, cancellationToken);
+            }
+            catch (MiniMaxUsageException ex) when (ex.ErrorType == MiniMaxErrorType.NetworkError && attempt < maxRetries)
+            {
+                lastException = ex;
+                Log($"Network error on attempt {attempt + 1}, will retry: {ex.Message}");
+                continue;
+            }
+            catch (MiniMaxUsageException ex) when (ex.ErrorType == MiniMaxErrorType.InvalidCredentials)
+            {
+                // Don't retry on auth errors
+                throw;
+            }
+            catch (Exception ex) when (attempt < maxRetries)
+            {
+                lastException = ex;
+                Log($"Error on attempt {attempt + 1}, will retry: {ex.Message}");
+                continue;
+            }
+        }
+
+        // If we get here, all retries failed
+        if (lastException is MiniMaxUsageException mme)
+            throw mme;
+        
+        throw new MiniMaxUsageException($"Failed after {maxRetries + 1} attempts: {lastException?.Message ?? "Unknown error"}", MiniMaxErrorType.NetworkError);
+    }
+
     public static async Task<UsageSnapshot> FetchUsageAsync(
         string cookieHeader,
         string? authorizationToken = null,
         string? groupId = null,
         CancellationToken cancellationToken = default)
     {
-        // First try the HTML page, then fall back to the remains API
-        try
+        const int maxRetries = 2;
+        Exception? lastException = null;
+
+        for (int attempt = 0; attempt <= maxRetries; attempt++)
         {
-            return await FetchCodingPlanHtmlAsync(cookieHeader, authorizationToken, cancellationToken);
+            try
+            {
+                if (attempt > 0)
+                {
+                    Log($"Retry attempt {attempt}/{maxRetries}");
+                    await Task.Delay(1000 * attempt, cancellationToken);
+                }
+
+                // First try the HTML page, then fall back to the remains API
+                try
+                {
+                    return await FetchCodingPlanHtmlAsync(cookieHeader, authorizationToken, cancellationToken);
+                }
+                catch (MiniMaxUsageException ex) when (ex.ErrorType == MiniMaxErrorType.ParseFailed)
+                {
+                    Log("Coding plan HTML parse failed, trying remains API");
+                    return await FetchCodingPlanRemainsAsync(cookieHeader, authorizationToken, groupId, cancellationToken);
+                }
+            }
+            catch (MiniMaxUsageException ex) when (ex.ErrorType == MiniMaxErrorType.NetworkError && attempt < maxRetries)
+            {
+                lastException = ex;
+                Log($"Network error on attempt {attempt + 1}, will retry: {ex.Message}");
+                continue;
+            }
+            catch (MiniMaxUsageException ex) when (ex.ErrorType == MiniMaxErrorType.InvalidCredentials)
+            {
+                throw; // Don't retry on auth errors
+            }
+            catch (Exception ex) when (attempt < maxRetries)
+            {
+                lastException = ex;
+                Log($"Error on attempt {attempt + 1}, will retry: {ex.Message}");
+                continue;
+            }
         }
-        catch (MiniMaxUsageException ex) when (ex.ErrorType == MiniMaxErrorType.ParseFailed)
-        {
-            Log("Coding plan HTML parse failed, trying remains API");
-            return await FetchCodingPlanRemainsAsync(cookieHeader, authorizationToken, groupId, cancellationToken);
-        }
+
+        if (lastException is MiniMaxUsageException mme)
+            throw mme;
+        
+        throw new MiniMaxUsageException($"Failed after {maxRetries + 1} attempts: {lastException?.Message ?? "Unknown error"}", MiniMaxErrorType.NetworkError);
     }
 
     private static async Task<UsageSnapshot> FetchCodingPlanHtmlAsync(
@@ -53,12 +138,22 @@ public static class MiniMaxUsageFetcher
         if (!response.IsSuccessStatusCode)
         {
             var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            Log($"API error: HTTP {(int)response.StatusCode}: {errorBody}");
+            Log($"API error: HTTP {(int)response.StatusCode}: {errorBody.Substring(0, Math.Min(200, errorBody.Length))}");
 
             if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized ||
                 response.StatusCode == System.Net.HttpStatusCode.Forbidden)
             {
                 throw new MiniMaxUsageException("MiniMax session cookie is invalid or expired.", MiniMaxErrorType.InvalidCredentials);
+            }
+
+            if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+            {
+                throw new MiniMaxUsageException("Rate limit exceeded. Please try again later.", MiniMaxErrorType.NetworkError);
+            }
+
+            if (response.StatusCode >= System.Net.HttpStatusCode.InternalServerError)
+            {
+                throw new MiniMaxUsageException($"Server error: HTTP {(int)response.StatusCode}", MiniMaxErrorType.NetworkError);
             }
 
             throw new MiniMaxUsageException($"HTTP {(int)response.StatusCode}", MiniMaxErrorType.ApiError);
@@ -67,10 +162,29 @@ public static class MiniMaxUsageFetcher
         var contentType = response.Content.Headers.ContentType?.MediaType ?? "";
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
 
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            throw new MiniMaxUsageException("Empty response from MiniMax API", MiniMaxErrorType.ParseFailed);
+        }
+
+        Log($"Response: Content-Type={contentType}, Body length={body.Length}");
+
         // If response is JSON, parse it as coding plan remains
         if (contentType.Contains("application/json", StringComparison.OrdinalIgnoreCase))
         {
             return MiniMaxUsageParser.ParseCodingPlanRemains(body);
+        }
+
+        // Try parsing as JSON anyway (some APIs don't set content-type correctly)
+        try
+        {
+            JsonDocument.Parse(body); // Validate JSON
+            Log("Response is JSON despite content-type");
+            return MiniMaxUsageParser.ParseCodingPlanRemains(body);
+        }
+        catch
+        {
+            // Not JSON, continue with other parsing methods
         }
 
         // Check if it looks like a signed-out page
@@ -81,6 +195,79 @@ public static class MiniMaxUsageFetcher
 
         // Parse HTML
         return MiniMaxUsageParser.ParseHtml(body);
+    }
+
+    /// <summary>
+    /// Fetch coding plan remains using API Key authentication
+    /// </summary>
+    private static async Task<UsageSnapshot> FetchCodingPlanRemainsWithApiKeyAsync(
+        string apiKey,
+        string? groupId,
+        CancellationToken cancellationToken)
+    {
+        var url = CodingPlanRemainsUrl;
+        if (!string.IsNullOrEmpty(groupId))
+        {
+            url = $"{CodingPlanRemainsUrl}?GroupId={Uri.EscapeDataString(groupId)}";
+        }
+
+        using var client = CreateHttpClientWithApiKey(apiKey);
+        client.DefaultRequestHeaders.Accept.ParseAdd("application/json, text/plain, */*");
+        client.DefaultRequestHeaders.Add("x-requested-with", "XMLHttpRequest");
+        client.DefaultRequestHeaders.Referrer = new Uri(CodingPlanRefererUrl);
+
+        var response = await client.GetAsync(url, cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            Log($"API error: HTTP {(int)response.StatusCode}: {errorBody}");
+
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized ||
+                response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+            {
+                throw new MiniMaxUsageException("MiniMax API key is invalid or expired. Get your Coding Plan API Key from Account/Coding Plan page.", MiniMaxErrorType.InvalidCredentials);
+            }
+
+            if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+            {
+                throw new MiniMaxUsageException("Rate limit exceeded. Please try again later.", MiniMaxErrorType.NetworkError);
+            }
+
+            if (response.StatusCode >= System.Net.HttpStatusCode.InternalServerError)
+            {
+                throw new MiniMaxUsageException($"Server error: HTTP {(int)response.StatusCode}", MiniMaxErrorType.NetworkError);
+            }
+
+            throw new MiniMaxUsageException($"HTTP {(int)response.StatusCode}", MiniMaxErrorType.ApiError);
+        }
+
+        var contentType = response.Content.Headers.ContentType?.MediaType ?? "";
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            throw new MiniMaxUsageException("Empty response from MiniMax API", MiniMaxErrorType.ParseFailed);
+        }
+
+        // If response is JSON, parse it
+        if (contentType.Contains("application/json", StringComparison.OrdinalIgnoreCase))
+        {
+            return MiniMaxUsageParser.ParseCodingPlanRemains(body);
+        }
+
+        // Try parsing as JSON anyway (some APIs don't set content-type correctly)
+        try
+        {
+            JsonDocument.Parse(body); // Validate JSON
+            return MiniMaxUsageParser.ParseCodingPlanRemains(body);
+        }
+        catch
+        {
+            // Not JSON, continue with other parsing methods
+        }
+
+        throw new MiniMaxUsageException("Unexpected response format from MiniMax API", MiniMaxErrorType.ParseFailed);
     }
 
     private static async Task<UsageSnapshot> FetchCodingPlanRemainsAsync(
@@ -113,11 +300,26 @@ public static class MiniMaxUsageFetcher
                 throw new MiniMaxUsageException("MiniMax session cookie is invalid or expired.", MiniMaxErrorType.InvalidCredentials);
             }
 
+            if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+            {
+                throw new MiniMaxUsageException("Rate limit exceeded. Please try again later.", MiniMaxErrorType.NetworkError);
+            }
+
+            if (response.StatusCode >= System.Net.HttpStatusCode.InternalServerError)
+            {
+                throw new MiniMaxUsageException($"Server error: HTTP {(int)response.StatusCode}", MiniMaxErrorType.NetworkError);
+            }
+
             throw new MiniMaxUsageException($"HTTP {(int)response.StatusCode}", MiniMaxErrorType.ApiError);
         }
 
         var contentType = response.Content.Headers.ContentType?.MediaType ?? "";
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            throw new MiniMaxUsageException("Empty response from MiniMax API", MiniMaxErrorType.ParseFailed);
+        }
 
         // If response is JSON, parse it
         if (contentType.Contains("application/json", StringComparison.OrdinalIgnoreCase))
@@ -133,6 +335,16 @@ public static class MiniMaxUsageFetcher
 
         // Try parsing as HTML
         return MiniMaxUsageParser.ParseHtml(body);
+    }
+
+    private static HttpClient CreateHttpClientWithApiKey(string apiKey)
+    {
+        var client = new HttpClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        client.DefaultRequestHeaders.Add("User-Agent", UserAgent);
+        client.DefaultRequestHeaders.Add("Accept-Language", "en-US,en;q=0.9");
+        client.DefaultRequestHeaders.Add("Origin", "https://platform.minimax.io");
+        return client;
     }
 
     private static HttpClient CreateHttpClient(string cookie, string? authorizationToken)

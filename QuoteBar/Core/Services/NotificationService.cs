@@ -16,6 +16,19 @@ public enum AlertThreshold
 }
 
 /// <summary>
+/// Notification types for categorization (matching Quotio)
+/// </summary>
+public enum NotificationType
+{
+    QuotaWarning,
+    QuotaCritical,
+    ProviderConnected,
+    ProviderDisconnected,
+    UpgradeAvailable,
+    DailySummary
+}
+
+/// <summary>
 /// Native Windows notification service using Windows App SDK
 /// </summary>
 public class NotificationService
@@ -275,6 +288,9 @@ public class NotificationService
         {
             if (!_isRegistered) return;
 
+            // Check granular toggle
+            if (!SettingsService.Instance.Settings.NotifyOnQuotaWarning) return;
+
             var windowLabel = windowSuffix == "secondary" ? descriptor.SecondaryLabel : descriptor.PrimaryLabel;
             DebugLogger.Log("NotificationService", $"Sending WARNING for {descriptor.DisplayName} ({windowLabel}) at {percentage:F0}%");
 
@@ -308,6 +324,9 @@ public class NotificationService
         try
         {
             if (!_isRegistered) return;
+
+            // Check granular toggle
+            if (!SettingsService.Instance.Settings.NotifyOnQuotaCritical) return;
 
             var windowLabel = windowSuffix == "secondary" ? descriptor.SecondaryLabel : descriptor.PrimaryLabel;
             DebugLogger.Log("NotificationService", $"Sending CRITICAL for {descriptor.DisplayName} ({windowLabel}) at {percentage:F0}%");
@@ -386,6 +405,9 @@ public class NotificationService
         {
             if (!_isRegistered) return;
 
+            // Check granular toggle
+            if (!SettingsService.Instance.Settings.NotifyOnProviderStatus) return;
+
             var status = isConnected ? "connected" : "disconnected";
             var icon = isConnected ? "✅" : "❌";
 
@@ -415,7 +437,7 @@ public class NotificationService
             var builder = new AppNotificationBuilder()
                 .AddText("📊 Daily Usage Summary")
                 .AddText(summary)
-                .AddText($"Estimated cost: ${totalCost:F2}")
+                .AddText($"Estimated cost: {CurrencyFormatter.FormatSmart(totalCost)}")
                 .AddButton(new AppNotificationButton("View Full Report")
                     .AddArgument("action", "report"));
 

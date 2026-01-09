@@ -51,6 +51,18 @@ public record ProviderCost
 }
 
 /// <summary>
+/// Available model info for providers that support model selection
+/// </summary>
+public record AvailableModel
+{
+    public string Id { get; init; } = "";
+    public string? Name { get; init; }
+    public string? Vendor { get; init; }
+    public string? Category { get; init; }
+    public bool IsPreview { get; init; }
+}
+
+/// <summary>
 /// Complete usage snapshot for a provider
 /// </summary>
 public record UsageSnapshot
@@ -64,4 +76,27 @@ public record UsageSnapshot
     public DateTime FetchedAt { get; init; }
     public string? ErrorMessage { get; init; }
     public bool IsLoading { get; init; }
+    
+    /// <summary>
+    /// URL to upgrade plan when current plan doesn't support the feature.
+    /// When set, UI should show an upgrade button/link.
+    /// </summary>
+    public string? UpgradeUrl { get; init; }
+    
+    /// <summary>
+    /// Whether the current plan requires an upgrade to use this provider.
+    /// When true, the provider card should show upgrade messaging instead of usage.
+    /// </summary>
+    public bool RequiresUpgrade { get; init; }
+    
+    /// <summary>
+    /// Whether the session has expired and requires re-authentication.
+    /// When true, the UI should show a "Re-login" button.
+    /// </summary>
+    public bool RequiresReauth { get; init; }
+    
+    /// <summary>
+    /// Available models for this provider (e.g., Copilot models the user can access)
+    /// </summary>
+    public List<AvailableModel>? AvailableModels { get; init; }
 }

@@ -158,28 +158,93 @@ public static class ZaiUsageFetcher
 
     public static async Task<UsageSnapshot> FetchUsageAsync(string apiKey, CancellationToken cancellationToken = default)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, QuotaApiUrl);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        const int maxRetries = 2;
+        Exception? lastException = null;
 
-        var response = await Services.SharedHttpClient.Default.SendAsync(request, cancellationToken);
-
-        if (!response.IsSuccessStatusCode)
+        for (int attempt = 0; attempt <= maxRetries; attempt++)
         {
-            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            Log($"API error: HTTP {(int)response.StatusCode}: {errorBody}");
-            throw new ZaiUsageException($"z.ai API error: HTTP {(int)response.StatusCode}");
+            try
+            {
+                if (attempt > 0)
+                {
+                    Log($"Retry attempt {attempt}/{maxRetries}");
+                    await Task.Delay(1000 * attempt, cancellationToken); // Exponential backoff
+                }
+
+                using var request = new HttpRequestMessage(HttpMethod.Get, QuotaApiUrl);
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+                var response = await Services.SharedHttpClient.Default.SendAsync(request, cancellationToken);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+                    Log($"API error: HTTP {(int)response.StatusCode}: {errorBody}");
+
+                    // Don't retry on auth errors
+                    if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized ||
+                        response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                    {
+                        throw new ZaiUsageException($"z.ai API key is invalid or expired. HTTP {(int)response.StatusCode}");
+                    }
+
+                    // Retry on rate limits and server errors
+                    if ((response.StatusCode == System.Net.HttpStatusCode.TooManyRequests ||
+                         response.StatusCode >= System.Net.HttpStatusCode.InternalServerError) &&
+                        attempt < maxRetries)
+                    {
+                        lastException = new ZaiUsageException($"z.ai API error: HTTP {(int)response.StatusCode}");
+                        continue;
+                    }
+
+                    throw new ZaiUsageException($"z.ai API error: HTTP {(int)response.StatusCode}");
+                }
+
+                var json = await response.Content.ReadAsStringAsync(cancellationToken);
+                
+                if (string.IsNullOrWhiteSpace(json))
+                {
+                    throw new ZaiUsageException("Empty response from z.ai API");
+                }
+
+                Log($"API response: {json.Substring(0, Math.Min(200, json.Length))}...");
+
+                return ParseResponse(json);
+            }
+            catch (ZaiUsageException ex) when (ex.Message.Contains("invalid") || ex.Message.Contains("expired"))
+            {
+                // Don't retry on auth errors
+                throw;
+            }
+            catch (Exception ex) when (attempt < maxRetries)
+            {
+                lastException = ex;
+                Log($"Error on attempt {attempt + 1}, will retry: {ex.Message}");
+                continue;
+            }
         }
 
-        var json = await response.Content.ReadAsStringAsync(cancellationToken);
-        Log($"API response: {json}");
-
-        return ParseResponse(json);
+        // If we get here, all retries failed
+        if (lastException is ZaiUsageException zue)
+            throw zue;
+        
+        throw new ZaiUsageException($"Failed after {maxRetries + 1} attempts: {lastException?.Message ?? "Unknown error"}");
     }
 
     private static UsageSnapshot ParseResponse(string json)
     {
-        var doc = JsonDocument.Parse(json);
+        JsonDocument doc;
+        try
+        {
+            doc = JsonDocument.Parse(json);
+        }
+        catch (JsonException ex)
+        {
+            Log($"JSON parse error: {ex.Message}");
+            throw new ZaiUsageException($"Invalid JSON response from z.ai API: {ex.Message}");
+        }
+
         var root = doc.RootElement;
 
         // Check success (CodexBar validates both `success` + `code == 200`)
@@ -190,7 +255,11 @@ public static class ZaiUsageFetcher
         if (!hasSuccess || !hasCode200)
         {
             var msg = root.TryGetProperty("msg", out var msgProp) ? msgProp.GetString() : "Unknown error";
-            throw new ZaiUsageException($"z.ai API failed: {msg}");
+            var errorCode = root.TryGetProperty("code", out var codeProp2) && codeProp2.ValueKind == JsonValueKind.Number
+                ? codeProp2.GetInt32().ToString()
+                : "unknown";
+            Log($"API returned error: code={errorCode}, msg={msg}");
+            throw new ZaiUsageException($"z.ai API failed: {msg} (code: {errorCode})");
         }
 
         // Parse data
@@ -376,7 +445,8 @@ public static class ZaiUsageFetcher
             Tertiary = tertiary,
             Identity = new ProviderIdentity
             {
-                PlanType = string.IsNullOrWhiteSpace(planName) ? "z.ai" : planName.Trim()
+                // Show plan name if available, otherwise indicate it's via API token
+                PlanType = string.IsNullOrWhiteSpace(planName) ? "API Token" : planName.Trim()
             },
             FetchedAt = DateTime.UtcNow
         };
