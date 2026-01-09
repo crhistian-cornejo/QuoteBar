@@ -66,14 +66,34 @@ public sealed class UpdateService : IDisposable
         _ = CheckForUpdatesAsync();
 
         // Then check every 24 hours
+        // Use a synchronous callback that wraps async operation to avoid async void issues
         _checkTimer = new Timer(
-            async _ => await CheckForUpdatesAsync(),
+            _ => OnTimerCallback(),
             null,
             TimeSpan.FromHours(24),
             TimeSpan.FromHours(24)
         );
 
         DebugLogger.Log("UpdateService", "Started periodic update checks (every 24h)");
+    }
+
+    /// <summary>
+    /// Timer callback wrapper that properly handles async operations and exceptions
+    /// </summary>
+    private void OnTimerCallback()
+    {
+        // Fire and forget, but handle exceptions properly
+        Task.Run(async () =>
+        {
+            try
+            {
+                await CheckForUpdatesAsync();
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.LogError("UpdateService", "Timer callback error", ex);
+            }
+        });
     }
 
     /// <summary>

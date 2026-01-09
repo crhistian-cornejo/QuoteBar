@@ -111,7 +111,7 @@ public partial class UsageStore : ObservableObject, IDisposable
         return ProviderRegistry.Instance.GetProvider(CurrentProviderId);
     }
     
-    public async Task RefreshAsync(string providerId)
+    public async Task RefreshAsync(string providerId, CancellationToken cancellationToken = default)
     {
         if (!_fetchers.TryGetValue(providerId, out var fetcher))
         {
@@ -130,10 +130,10 @@ public partial class UsageStore : ObservableObject, IDisposable
         
         try
         {
-            var snapshot = await fetcher.FetchAsync();
+            var snapshot = await fetcher.FetchAsync(cancellationToken);
             
             // Enrich with local cost data for supported providers
-            snapshot = await EnrichWithLocalCostDataAsync(providerId, snapshot);
+            snapshot = await EnrichWithLocalCostDataAsync(providerId, snapshot, cancellationToken);
             
             _snapshots[providerId] = snapshot;
 
@@ -146,6 +146,11 @@ public partial class UsageStore : ObservableObject, IDisposable
 
             // Record history for charts
             UsageHistoryService.Instance.RecordSnapshot(providerId, snapshot);
+        }
+        catch (OperationCanceledException)
+        {
+            // Cancellation is expected, don't log as error
+            DebugLogger.Log("UsageStore", $"Refresh cancelled for {providerId}");
         }
         catch (Exception ex)
         {
@@ -163,7 +168,7 @@ public partial class UsageStore : ObservableObject, IDisposable
     /// <summary>
     /// Enrich a snapshot with local cost data from CLI logs (Codex/Claude)
     /// </summary>
-    private async Task<UsageSnapshot> EnrichWithLocalCostDataAsync(string providerId, UsageSnapshot snapshot)
+    private async Task<UsageSnapshot> EnrichWithLocalCostDataAsync(string providerId, UsageSnapshot snapshot, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -172,11 +177,11 @@ public partial class UsageStore : ObservableObject, IDisposable
             // Get local cost data for supported providers
             if (providerId.Equals("codex", StringComparison.OrdinalIgnoreCase))
             {
-                costSnapshot = await _costFetcher.LoadTokenSnapshotAsync(CostUsageProvider.Codex);
+                costSnapshot = await _costFetcher.LoadTokenSnapshotAsync(CostUsageProvider.Codex, forceRefresh: false, cancellationToken);
             }
             else if (providerId.Equals("claude", StringComparison.OrdinalIgnoreCase))
             {
-                costSnapshot = await _costFetcher.LoadTokenSnapshotAsync(CostUsageProvider.Claude);
+                costSnapshot = await _costFetcher.LoadTokenSnapshotAsync(CostUsageProvider.Claude, forceRefresh: false, cancellationToken);
             }
 
             if (costSnapshot != null && (costSnapshot.Last30DaysCostUSD > 0 || costSnapshot.Last30DaysTokens > 0))
@@ -220,9 +225,9 @@ public partial class UsageStore : ObservableObject, IDisposable
         DebugLogger.Log("UsageStore", $"Cleared snapshot for {providerId}");
     }
 
-    public async Task RefreshAllAsync()
+    public async Task RefreshAllAsync(CancellationToken cancellationToken = default)
     {
-        var tasks = ActiveProviderIds.Select(id => RefreshAsync(id));
+        var tasks = ActiveProviderIds.Select(id => RefreshAsync(id, cancellationToken));
         await Task.WhenAll(tasks);
 
         // Notify listeners that all providers have been refreshed
@@ -237,9 +242,21 @@ public partial class UsageStore : ObservableObject, IDisposable
         return ActiveProviderIds.ToDictionary(id => id, id => GetSnapshot(id));
     }
     
-    private async void OnRefreshTimer(object? state)
+    private void OnRefreshTimer(object? state)
     {
-        await RefreshAllAsync();
+        // Fire and forget, but handle exceptions properly
+        // Use a cancellation token that can be cancelled if needed
+        Task.Run(async () =>
+        {
+            try
+            {
+                await RefreshAllAsync();
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.LogError("UsageStore", "Timer refresh error", ex);
+            }
+        });
     }
     
     public void Dispose()

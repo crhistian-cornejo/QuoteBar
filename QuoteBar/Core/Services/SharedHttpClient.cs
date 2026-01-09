@@ -39,10 +39,14 @@ public static class SharedHttpClient
     public static HttpClient Long => _longTimeoutClient.Value;
 
     /// <summary>
-    /// Create a configured HttpClient with custom headers.
-    /// Note: Only use when you need custom headers per-request.
-    /// Prefer using Default/Quick/Long with per-request headers when possible.
+    /// Create a configured HttpClient with custom default headers.
+    /// WARNING: The returned HttpClient MUST be disposed by the caller (use 'using' statement).
+    /// Prefer using Default/Quick/Long with per-request headers when possible to avoid creating new instances.
     /// </summary>
+    /// <remarks>
+    /// This method creates a new HttpClient instance. For better performance and to avoid socket exhaustion,
+    /// prefer using SharedHttpClient.Default/Quick/Long and setting headers on individual HttpRequestMessage objects.
+    /// </remarks>
     public static HttpClient CreateWithHeaders(params (string name, string value)[] headers)
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };

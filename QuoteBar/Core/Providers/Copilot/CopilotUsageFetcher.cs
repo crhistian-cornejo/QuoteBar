@@ -572,7 +572,17 @@ public static class CopilotUsageFetcher
     /// </summary>
     public static async Task<CopilotUsageData> FetchUsageAsync(string accessToken, CancellationToken cancellationToken = default)
     {
-        using var client = CreateHttpClient(accessToken);
+        // Create HttpClient with BaseAddress for relative URLs used by FetchUserInfoAsync, etc.
+        using var client = new HttpClient
+        {
+            BaseAddress = new Uri(BaseUrl),
+            Timeout = TimeSpan.FromSeconds(TimeoutSeconds)
+        };
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+        client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
+        client.DefaultRequestHeaders.Add("User-Agent", "QuoteBar");
+        
         var usageData = new CopilotUsageData();
 
         // First, get user info to know the username
@@ -1105,21 +1115,7 @@ public static class CopilotUsageFetcher
         return $"Resets in {(int)diff.TotalMinutes}m";
     }
 
-    private static HttpClient CreateHttpClient(string accessToken)
-    {
-        var client = new HttpClient
-        {
-            BaseAddress = new Uri(BaseUrl),
-            Timeout = TimeSpan.FromSeconds(TimeoutSeconds)
-        };
-
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
-        client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
-        client.DefaultRequestHeaders.Add("User-Agent", "QuoteBar");
-
-        return client;
-    }
+    // Removed unused CreateHttpClient method - use SharedHttpClient.Default with per-request headers instead
 
     private static void Log(string message)
     {

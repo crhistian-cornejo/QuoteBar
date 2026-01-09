@@ -22,11 +22,8 @@ public class CopilotDeviceFlow
     private const string ClientId = "Iv1.b507a08c87ecfe98";
     private const string Scopes = "read:user";
 
-    private readonly HttpClient _httpClient;
-
     public CopilotDeviceFlow()
     {
-        _httpClient = new HttpClient();
     }
 
     /// <summary>
@@ -46,7 +43,8 @@ public class CopilotDeviceFlow
         request.Content = content;
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
-        var response = await _httpClient.SendAsync(request);
+        // Use SharedHttpClient to avoid socket exhaustion
+        var response = await Core.Services.SharedHttpClient.Default.SendAsync(request);
         response.EnsureSuccessStatusCode();
 
         var json = await response.Content.ReadAsStringAsync();
@@ -81,7 +79,8 @@ public class CopilotDeviceFlow
             request.Content = content;
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
-            var response = await _httpClient.SendAsync(request, cancellationToken);
+            // Use SharedHttpClient to avoid socket exhaustion
+            var response = await Core.Services.SharedHttpClient.Default.SendAsync(request, cancellationToken);
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
 
             DebugLogger.Log("CopilotDeviceFlow", $"Token poll response: {json}");

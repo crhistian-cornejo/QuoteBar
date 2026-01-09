@@ -59,7 +59,14 @@ public class SettingsService : IDisposable
             _saveDebounceTimer?.Dispose();
 
             // Schedule save after debounce period
-            _saveDebounceTimer = new Timer(_ => PerformSave(), null, SaveDebounceMs, Timeout.Infinite);
+            // Wrap PerformSave in a lock-safe callback to prevent race conditions
+            _saveDebounceTimer = new Timer(_ =>
+            {
+                lock (_saveLock)
+                {
+                    PerformSave();
+                }
+            }, null, SaveDebounceMs, Timeout.Infinite);
         }
 
         // Fire settings changed immediately (UI updates shouldn't wait)
@@ -82,10 +89,13 @@ public class SettingsService : IDisposable
         {
             _saveDebounceTimer?.Dispose();
             _saveDebounceTimer = null;
+            PerformSave();
         }
-        PerformSave();
     }
 
+    /// <summary>
+    /// Perform the actual save operation. Must be called within _saveLock.
+    /// </summary>
     private void PerformSave()
     {
         try

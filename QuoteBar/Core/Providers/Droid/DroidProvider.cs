@@ -555,7 +555,6 @@ public class DroidFetchException : Exception
 /// </summary>
 public static class DroidUsageFetcher
 {
-    private static readonly HttpClient _httpClient = new();
     private const string ApiBaseUrl = "https://api.factory.ai";
 
     public static async Task<UsageSnapshot> FetchAsync(
@@ -581,7 +580,8 @@ public static class DroidUsageFetcher
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
             request.Headers.Add("x-factory-client", "web-app");
 
-            var response = await _httpClient.SendAsync(request, cancellationToken);
+            // Use SharedHttpClient to avoid socket exhaustion
+            var response = await Core.Services.SharedHttpClient.Default.SendAsync(request, cancellationToken);
 
             if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized ||
                 response.StatusCode == System.Net.HttpStatusCode.Forbidden)
