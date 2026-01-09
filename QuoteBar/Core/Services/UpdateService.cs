@@ -62,19 +62,23 @@ public sealed class UpdateService : IDisposable
     {
         if (_checkTimer != null) return;
 
-        // Check once on startup
-        _ = CheckForUpdatesAsync();
+        // Check immediately on startup (force=true to bypass time check)
+        _ = Task.Run(async () =>
+        {
+            // Small delay to let the app fully initialize
+            await Task.Delay(1500);
+            await CheckForUpdatesAsync(force: true);
+        });
 
-        // Then check every 24 hours
-        // Use a synchronous callback that wraps async operation to avoid async void issues
+        // Then check every 6 hours (more responsive to updates)
         _checkTimer = new Timer(
             _ => OnTimerCallback(),
             null,
-            TimeSpan.FromHours(24),
-            TimeSpan.FromHours(24)
+            TimeSpan.FromHours(6),
+            TimeSpan.FromHours(6)
         );
 
-        DebugLogger.Log("UpdateService", "Started periodic update checks (every 24h)");
+        DebugLogger.Log("UpdateService", "Started periodic update checks (every 6h)");
     }
 
     /// <summary>
@@ -177,9 +181,11 @@ public sealed class UpdateService : IDisposable
     }
 
     /// <summary>
-    /// Download the latest update
+    /// Download the latest update with phase callbacks
     /// </summary>
-    public async Task<string?> DownloadUpdateAsync(GitHubRelease release, IProgress<double>? progress = null)
+    public async Task<string?> DownloadUpdateAsync(
+        GitHubRelease release, 
+        IProgress<UpdateProgress>? progress = null)
     {
         try
         {
@@ -191,6 +197,12 @@ public sealed class UpdateService : IDisposable
             }
 
             var tempDir = Path.Combine(Path.GetTempPath(), "QuoteBar-Update");
+            
+            // Clean up previous update attempt
+            if (Directory.Exists(tempDir))
+            {
+                try { Directory.Delete(tempDir, true); } catch { }
+            }
             Directory.CreateDirectory(tempDir);
 
             var zipPath = Path.Combine(tempDir, asset.Name);
@@ -198,38 +210,49 @@ public sealed class UpdateService : IDisposable
 
             DebugLogger.Log("UpdateService", $"Downloading {asset.Name} ({asset.FormattedSize})");
 
-            // Download file with progress
+            // Phase 1: Download
+            progress?.Report(new UpdateProgress(UpdatePhase.Downloading, 0, "Connecting..."));
+
             var response = await _httpClient.GetAsync(asset.BrowserDownloadUrl, HttpCompletionOption.ResponseHeadersRead);
             response.EnsureSuccessStatusCode();
 
             var totalBytes = response.Content.Headers.ContentLength ?? 0;
-            var buffer = new byte[8192];
+            var buffer = new byte[81920]; // Larger buffer for faster downloads
             var bytesRead = 0L;
 
-            await using (var fs = new FileStream(zipPath, FileMode.Create, FileAccess.Write, FileShare.None))
+            await using (var fs = new FileStream(zipPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, true))
             await using (var stream = await response.Content.ReadAsStreamAsync())
             {
-                var readCount = 0;
-                while ((readCount = await stream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                int readCount;
+                while ((readCount = await stream.ReadAsync(buffer)) > 0)
                 {
-                    await fs.WriteAsync(buffer, 0, readCount);
+                    await fs.WriteAsync(buffer.AsMemory(0, readCount));
                     bytesRead += readCount;
 
-                    if (totalBytes > 0 && progress != null)
+                    if (totalBytes > 0)
                     {
-                        progress.Report((double)bytesRead / totalBytes * 100);
+                        var percent = (double)bytesRead / totalBytes * 100;
+                        var mbDownloaded = bytesRead / 1024.0 / 1024.0;
+                        var mbTotal = totalBytes / 1024.0 / 1024.0;
+                        progress?.Report(new UpdateProgress(
+                            UpdatePhase.Downloading, 
+                            percent, 
+                            $"Downloading... {mbDownloaded:F1} / {mbTotal:F1} MB"));
                     }
                 }
             }
 
             DebugLogger.Log("UpdateService", $"Download complete: {zipPath}");
 
-            // Extract zip
+            // Phase 2: Extract
+            progress?.Report(new UpdateProgress(UpdatePhase.Extracting, 0, "Extracting files..."));
+            
             Directory.CreateDirectory(extractDir);
-            ZipFile.ExtractToDirectory(zipPath, extractDir);
+            await ExtractWithProgressAsync(zipPath, extractDir, progress);
 
             DebugLogger.Log("UpdateService", $"Extracted to: {extractDir}");
 
+            progress?.Report(new UpdateProgress(UpdatePhase.Ready, 100, "Ready to install"));
             UpdateDownloaded?.Invoke(extractDir);
 
             return extractDir;
@@ -239,6 +262,47 @@ public sealed class UpdateService : IDisposable
             DebugLogger.LogError("UpdateService", "Download failed", ex);
             return null;
         }
+    }
+
+    /// <summary>
+    /// Extract zip with progress reporting
+    /// </summary>
+    private static async Task ExtractWithProgressAsync(string zipPath, string extractDir, IProgress<UpdateProgress>? progress)
+    {
+        await Task.Run(() =>
+        {
+            using var archive = ZipFile.OpenRead(zipPath);
+            var totalEntries = archive.Entries.Count;
+            var extracted = 0;
+
+            foreach (var entry in archive.Entries)
+            {
+                var destinationPath = Path.Combine(extractDir, entry.FullName);
+                
+                // Handle directories
+                if (string.IsNullOrEmpty(entry.Name))
+                {
+                    Directory.CreateDirectory(destinationPath);
+                }
+                else
+                {
+                    // Ensure directory exists
+                    var dir = Path.GetDirectoryName(destinationPath);
+                    if (!string.IsNullOrEmpty(dir))
+                    {
+                        Directory.CreateDirectory(dir);
+                    }
+                    entry.ExtractToFile(destinationPath, overwrite: true);
+                }
+
+                extracted++;
+                var percent = (double)extracted / totalEntries * 100;
+                progress?.Report(new UpdateProgress(
+                    UpdatePhase.Extracting, 
+                    percent, 
+                    $"Extracting... {extracted}/{totalEntries} files"));
+            }
+        });
     }
 
     /// <summary>
@@ -377,3 +441,21 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
         _httpClient?.Dispose();
     }
 }
+
+/// <summary>
+/// Phases of the update process
+/// </summary>
+public enum UpdatePhase
+{
+    Downloading,
+    Extracting,
+    Installing,
+    Ready,
+    Complete,
+    Error
+}
+
+/// <summary>
+/// Progress information for update operations
+/// </summary>
+public record UpdateProgress(UpdatePhase Phase, double Percent, string Status);
